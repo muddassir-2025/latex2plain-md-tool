@@ -1,1 +1,4 @@
 node_modules/
+dist/
+*.plain.md
+.DS_Store

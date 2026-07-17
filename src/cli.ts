@@ -61,9 +61,7 @@ function simpleDiff(before: string, after: string): string {
         }
     }
 
-    return lines.length === 0
-        ? "(no changes)"
-        : lines.join("\n");
+    return lines.length === 0 ? "(no changes)" : lines.join("\n");
 }
 
 // ─── Collect .md files ────────────────────────────────────────────────────────
@@ -96,7 +94,7 @@ async function processFile(
     inputPath: string,
     outputPath: string | null,
     opts: ConvertOptions,
-    flags: { dryRun: boolean; diff: boolean; verbose: boolean; yes: boolean }
+    flags: { dryRun: boolean; diff: boolean; verbose: boolean; yes: boolean },
 ): Promise<void> {
     const input = await readFile(inputPath);
     const output = convert(input, opts);
@@ -147,20 +145,48 @@ export async function runCLI(argv: string[]): Promise<void> {
     for (const arg of argv) {
         switch (arg) {
             case "-h":
-            case "--help":         flags.help = true; break;
+            case "--help":
+                flags.help = true;
+                break;
             case "-v":
-            case "--version":      flags.version = true; break;
+            case "--version":
+                flags.version = true;
+                break;
             case "-y":
-            case "--yes":          flags.yes = true; opts.yes = true; break;
-            case "--dry-run":      flags.dryRun = true; opts.dryRun = true; break;
-            case "--diff":         flags.diff = true; opts.diff = true; break;
-            case "--stdin":        flags.stdin = true; break;
-            case "--verbose":      flags.verbose = true; opts.verbose = true; break;
-            case "--no-subscripts":  opts.noSubscripts = true; break;
-            case "--no-superscripts": opts.noSuperscripts = true; break;
-            case "--no-fractions": opts.noFractions = true; break;
-            case "--no-roots":     opts.noRoots = true; break;
-            case "--no-mappings":  opts.noMappings = true; break;
+            case "--yes":
+                flags.yes = true;
+                opts.yes = true;
+                break;
+            case "--dry-run":
+                flags.dryRun = true;
+                opts.dryRun = true;
+                break;
+            case "--diff":
+                flags.diff = true;
+                opts.diff = true;
+                break;
+            case "--stdin":
+                flags.stdin = true;
+                break;
+            case "--verbose":
+                flags.verbose = true;
+                opts.verbose = true;
+                break;
+            case "--no-subscripts":
+                opts.noSubscripts = true;
+                break;
+            case "--no-superscripts":
+                opts.noSuperscripts = true;
+                break;
+            case "--no-fractions":
+                opts.noFractions = true;
+                break;
+            case "--no-roots":
+                opts.noRoots = true;
+                break;
+            case "--no-mappings":
+                opts.noMappings = true;
+                break;
             default:
                 if (!arg.startsWith("-")) positional.push(arg);
                 else console.warn(`⚠  Unknown flag: ${arg}`);
@@ -210,10 +236,5 @@ export async function runCLI(argv: string[]): Promise<void> {
     }
 
     // Single file
-    await processFile(
-        inputArg,
-        outputArg ?? null,
-        opts,
-        flags
-    );
+    await processFile(inputArg, outputArg ?? null, opts, flags);
 }

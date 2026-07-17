@@ -1,10 +1,10 @@
-import fs from "fs";
+import { promises as fs } from "fs";
 
 /**
  * Write content to a file on disk.
  */
 export async function writeFile(filepath: string, content: string): Promise<void> {
-    fs.writeFileSync(filepath, content, "utf-8");
+    await fs.writeFile(filepath, content, "utf-8");
 }
 
 /**

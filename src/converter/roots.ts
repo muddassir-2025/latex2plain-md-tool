@@ -25,7 +25,10 @@ function extractBraced(text: string, start: number): [string, number] {
 
     for (; i < text.length; i++) {
         if (text[i] === "{") {
-            if (depth === 0) { depth++; continue; }
+            if (depth === 0) {
+                depth++;
+                continue;
+            }
             depth++;
             content += text[i];
         } else if (text[i] === "}") {

@@ -25,7 +25,7 @@ export function convertText(text: string): string {
 
         // Find the matching closing brace
         let depth = 0;
-        let start = matchIndex + 6; // skip \text{
+        const start = matchIndex + 6; // skip \text{
         let j = start;
 
         for (; j < text.length; j++) {
@@ -38,6 +38,50 @@ export function convertText(text: string): string {
 
         // Extract the inner content (without braces)
         result += text.slice(start, j);
+        i = j + 1; // skip the closing }
+    }
+
+    return result;
+}
+
+/**
+ * Convert \tag{...} to its content wrapped in parentheses.
+ *
+ *   \tag{1}  →  (1)
+ *   \tag{*}  →  (*)
+ *   \tag{1.1} →  (1.1)
+ */
+export function convertTag(text: string): string {
+    let result = "";
+    let i = 0;
+
+    while (i < text.length) {
+        // Look for \tag{
+        const matchIndex = text.indexOf("\\tag{", i);
+        if (matchIndex === -1) {
+            result += text.slice(i);
+            break;
+        }
+
+        // Append everything before \tag{
+        result += text.slice(i, matchIndex);
+
+        // Find the matching closing brace
+        let depth = 0;
+        const start = matchIndex + 5; // skip \tag{
+        let j = start;
+
+        for (; j < text.length; j++) {
+            if (text[j] === "{") depth++;
+            else if (text[j] === "}") {
+                if (depth === 0) break;
+                depth--;
+            }
+        }
+
+        // Extract inner content and wrap in parentheses
+        const inner = text.slice(start, j);
+        result += `(${inner.trim()})`;
         i = j + 1; // skip the closing }
     }
 

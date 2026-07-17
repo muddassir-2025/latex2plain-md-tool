@@ -1,11 +1,37 @@
 // Unicode subscript character map
 const SUBSCRIPT_MAP: Record<string, string> = {
-    "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄",
-    "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
-    "a": "ₐ", "e": "ₑ", "o": "ₒ", "x": "ₓ",
-    "h": "ₕ", "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ",
-    "p": "ₚ", "s": "ₛ", "t": "ₜ",
-    "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎",
+    "0": "₀",
+    "1": "₁",
+    "2": "₂",
+    "3": "₃",
+    "4": "₄",
+    "5": "₅",
+    "6": "₆",
+    "7": "₇",
+    "8": "₈",
+    "9": "₉",
+    a: "ₐ",
+    e: "ₑ",
+    i: "ᵢ",
+    j: "ⱼ",
+    o: "ₒ",
+    r: "ᵣ",
+    u: "ᵤ",
+    v: "ᵥ",
+    x: "ₓ",
+    h: "ₕ",
+    k: "ₖ",
+    l: "ₗ",
+    m: "ₘ",
+    n: "ₙ",
+    p: "ₚ",
+    s: "ₛ",
+    t: "ₜ",
+    "+": "₊",
+    "-": "₋",
+    "=": "₌",
+    "(": "₍",
+    ")": "₎",
 };
 
 /**
@@ -13,7 +39,10 @@ const SUBSCRIPT_MAP: Record<string, string> = {
  * Falls back to original characters for unmapped ones.
  */
 function toSubscript(chars: string): string {
-    return chars.split("").map(c => SUBSCRIPT_MAP[c] ?? c).join("");
+    return chars
+        .split("")
+        .map((c) => SUBSCRIPT_MAP[c] ?? c)
+        .join("");
 }
 
 /**

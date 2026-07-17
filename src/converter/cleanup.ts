@@ -10,7 +10,7 @@ export function cleanup(text: string): string {
     // Split into lines
     const lines = text.split("\n");
 
-    const cleaned = lines.map(line => {
+    const cleaned = lines.map((line) => {
         // Trim trailing whitespace
         line = line.trimEnd();
         // Collapse multiple consecutive spaces to one

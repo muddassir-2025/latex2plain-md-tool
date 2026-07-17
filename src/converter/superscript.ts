@@ -1,13 +1,45 @@
 // Unicode superscript character map
 const SUPERSCRIPT_MAP: Record<string, string> = {
-    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
-    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
-    "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
-    "n": "ⁿ", "i": "ⁱ", "a": "ᵃ", "b": "ᵇ", "c": "ᶜ",
-    "d": "ᵈ", "e": "ᵉ", "f": "ᶠ", "g": "ᵍ", "h": "ʰ",
-    "j": "ʲ", "k": "ᵏ", "l": "ˡ", "m": "ᵐ", "o": "ᵒ",
-    "p": "ᵖ", "r": "ʳ", "s": "ˢ", "t": "ᵗ", "u": "ᵘ",
-    "v": "ᵛ", "w": "ʷ", "x": "ˣ", "y": "ʸ", "z": "ᶻ",
+    "0": "⁰",
+    "1": "¹",
+    "2": "²",
+    "3": "³",
+    "4": "⁴",
+    "5": "⁵",
+    "6": "⁶",
+    "7": "⁷",
+    "8": "⁸",
+    "9": "⁹",
+    "+": "⁺",
+    "-": "⁻",
+    "=": "⁼",
+    "(": "⁽",
+    ")": "⁾",
+    n: "ⁿ",
+    i: "ⁱ",
+    a: "ᵃ",
+    b: "ᵇ",
+    c: "ᶜ",
+    d: "ᵈ",
+    e: "ᵉ",
+    f: "ᶠ",
+    g: "ᵍ",
+    h: "ʰ",
+    j: "ʲ",
+    k: "ᵏ",
+    l: "ˡ",
+    m: "ᵐ",
+    o: "ᵒ",
+    p: "ᵖ",
+    r: "ʳ",
+    s: "ˢ",
+    t: "ᵗ",
+    u: "ᵘ",
+    v: "ᵛ",
+    w: "ʷ",
+    x: "ˣ",
+    y: "ʸ",
+    z: "ᶻ",
 };
 
 /**
@@ -15,7 +47,10 @@ const SUPERSCRIPT_MAP: Record<string, string> = {
  * Falls back to original characters for unmapped ones.
  */
 function toSuperscript(chars: string): string {
-    return chars.split("").map(c => SUPERSCRIPT_MAP[c] ?? c).join("");
+    return chars
+        .split("")
+        .map((c) => SUPERSCRIPT_MAP[c] ?? c)
+        .join("");
 }
 
 /**

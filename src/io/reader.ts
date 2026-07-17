@@ -1,11 +1,11 @@
-import fs from "fs";
+import { promises as fs } from "fs";
 import { createInterface } from "readline";
 
 /**
  * Read a file from disk and return its content as a string.
  */
 export async function readFile(filepath: string): Promise<string> {
-    return fs.readFileSync(filepath, "utf8");
+    return fs.readFile(filepath, "utf8");
 }
 
 /**

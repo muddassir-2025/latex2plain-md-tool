@@ -9,6 +9,7 @@ import {
     stripSout,
     stripUnderlineOverline,
     stripOverUnderBraces,
+    stripBoxed,
     stripPhantomCommands,
     stripAccents,
 } from "../src/converter/stripping.js";
@@ -201,6 +202,21 @@ describe("stripOverUnderBraces", () => {
 
     it("leaves plain text unchanged", () => {
         expect(stripOverUnderBraces("hello world")).toBe("hello world");
+    });
+});
+
+describe("stripBoxed", () => {
+    it("strips \\boxed{text}", () => {
+        expect(stripBoxed("\\boxed{y=C1+C2e^{-x}}")).toBe("y=C1+C2e^{-x}");
+    });
+
+    it("strips multiline boxed", () => {
+        const input = "\\boxed{\ny=C1+C2e^{-x}+1/3x^3+4x\n}";
+        expect(stripBoxed(input)).toBe("\ny=C1+C2e^{-x}+1/3x^3+4x\n");
+    });
+
+    it("leaves plain text unchanged", () => {
+        expect(stripBoxed("hello world")).toBe("hello world");
     });
 });
 

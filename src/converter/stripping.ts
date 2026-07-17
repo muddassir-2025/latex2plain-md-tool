@@ -82,6 +82,13 @@ export function stripUnderlineOverline(text: string): string {
 }
 
 /**
+ * Strip \boxed{...}
+ */
+export function stripBoxed(text: string): string {
+    return stripBraceCommand(text, /\\boxed/);
+}
+
+/**
  * Strip \underbrace{...} and \overbrace{...}
  */
 export function stripOverUnderBraces(text: string): string {

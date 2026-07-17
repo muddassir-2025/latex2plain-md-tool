@@ -26,6 +26,7 @@ import {
     stripSout,
     stripUnderlineOverline,
     stripOverUnderBraces,
+    stripBoxed,
     stripPhantomCommands,
     stripAccents,
 } from "./stripping.js";
@@ -102,6 +103,7 @@ export function runPipeline(text: string, opts: ConvertOptions = {}): string {
         result = stripSout(result);
         result = stripUnderlineOverline(result);
         result = stripOverUnderBraces(result);
+        result = stripBoxed(result);
 
         // Step 12 — strip phantom commands
         result = stripPhantomCommands(result);

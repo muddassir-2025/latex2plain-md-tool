@@ -1,85 +1,109 @@
 /**
- * Extract the content of a brace-balanced group starting right after position `start`.
- * Assumes text[start] === '{'.
- * Returns [content, indexAfterClosingBrace].
- */
-function extractBraced(text: string, start: number): [string, number] {
-    let depth = 0;
-    let i = start;
-    let content = "";
-
-    for (; i < text.length; i++) {
-        if (text[i] === "{") {
-            if (depth === 0) {
-                // opening brace — don't include in content
-                depth++;
-                continue;
-            }
-            depth++;
-            content += text[i];
-        } else if (text[i] === "}") {
-            depth--;
-            if (depth === 0) {
-                return [content, i + 1];
-            }
-            content += text[i];
-        } else {
-            content += text[i];
-        }
-    }
-
-    // Unmatched brace — return whatever we have
-    return [content, i];
-}
-
-/**
- * Format a fraction numerator/denominator:
- * - If the value is a single character or simple token, no parens.
- * - If it contains operators or spaces, wrap in parens.
- */
-function formatFracPart(part: string): string {
-    const trimmed = part.trim();
-    // Single token: one or two chars without operators
-    if (/^[a-zA-Z0-9αβγδεζηθικλμνξπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΠΡΣΤΥΦΧΨΩ]+$/.test(trimmed)) {
-        return trimmed;
-    }
-    return `(${trimmed})`;
-}
-
-/**
  * Convert \frac{numerator}{denominator} to plain text fraction.
  *
- *   \frac{1}{2}      →  1/2
- *   \frac{a+b}{c}    →  (a+b)/c
- *   \frac{1}{n+1}    →  1/(n+1)
+ * Handles standard and shorthand forms:
+ *   \frac{1}{2}      →  1/2       (standard — both braced)
+ *   \frac12          →  1/2       (shorthand — no braces, both single chars)
+ *   \frac1{2}        →  1/2       (shorthand — first single char, second braced)
+ *   \frac{1}2        →  1/2       (shorthand — first braced, second single char)
+ *   \frac{a+b}{c}    →  (a+b)/c   (braced expression)
+ *   \frac{1}{n+1}    →  1/(n+1)   (braced expression)
+ */
+
+import { extractBraced, formatFracPart } from "./utils.js";
+
+/**
+ * A single non-braced fraction argument (e.g. a digit, letter, or Greek char).
+ */
+const TOKEN_RE = /^[a-zA-Z0-9αβγδεζηθικλμνξπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΠΡΣΤΥΦΧΨΩ]/;
+
+/**
+ * Convert all \frac forms in text to plain-text fraction notation.
  */
 export function convertFractions(text: string): string {
     let result = "";
     let i = 0;
 
     while (i < text.length) {
-        const matchIndex = text.indexOf("\\frac{", i);
+        const matchIndex = text.indexOf("\\frac", i);
         if (matchIndex === -1) {
             result += text.slice(i);
             break;
         }
 
+        const afterFrac = matchIndex + 5; // skip \frac
+        let pos = afterFrac;
+
+        // Guard: make sure \frac is not part of a longer command like \fracbox
+        if (pos < text.length && /[a-zA-Z]/.test(text[pos]) && text[pos] !== "{") {
+            result += text.slice(i, pos);
+            i = pos;
+            continue;
+        }
+
+        // Append everything before \frac
         result += text.slice(i, matchIndex);
 
-        // Extract numerator
-        const [num, afterNum] = extractBraced(text, matchIndex + 5); // skip \frac
+        // ── Extract numerator ────────────────────────────────────────────────
+        let num: string;
+        let afterNum: number;
 
-        // Extract denominator — must start with {
-        if (afterNum >= text.length || text[afterNum] !== "{") {
-            // Malformed — emit as-is
-            result += text.slice(matchIndex, afterNum);
+        // Skip whitespace before numerator
+        while (pos < text.length && text[pos] === " ") pos++;
+
+        if (pos >= text.length) {
+            // \frac at end of string — emit as-is
+            result += "\\frac";
+            i = pos;
+            break;
+        }
+
+        if (text[pos] === "{") {
+            [num, afterNum] = extractBraced(text, pos);
+        } else {
+            const tokenMatch = text.slice(pos).match(TOKEN_RE);
+            if (tokenMatch) {
+                num = tokenMatch[0];
+                afterNum = pos + tokenMatch[0].length;
+            } else {
+                // Not a valid \frac — emit as-is
+                result += "\\frac";
+                i = pos;
+                continue;
+            }
+        }
+
+        // ── Extract denominator ──────────────────────────────────────────────
+        let den: string;
+        let afterDen: number;
+
+        // Skip whitespace before denominator
+        let denPos = afterNum;
+        while (denPos < text.length && text[denPos] === " ") denPos++;
+
+        if (denPos >= text.length) {
+            // No denominator — emit numerator only
+            result += num;
             i = afterNum;
             continue;
         }
 
-        const [den, afterDen] = extractBraced(text, afterNum);
+        if (text[denPos] === "{") {
+            [den, afterDen] = extractBraced(text, denPos);
+        } else {
+            const tokenMatch = text.slice(denPos).match(TOKEN_RE);
+            if (tokenMatch) {
+                den = tokenMatch[0];
+                afterDen = denPos + tokenMatch[0].length;
+            } else {
+                // Invalid denominator — emit \frac + numerator
+                result += "\\frac" + num;
+                i = afterNum;
+                continue;
+            }
+        }
 
-        result += `${formatFracPart(num)}/${formatFracPart(den)}`;
+        result += formatFracPart(num) + "/" + formatFracPart(den);
         i = afterDen;
     }
 

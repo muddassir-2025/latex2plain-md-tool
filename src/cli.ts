@@ -7,7 +7,7 @@ import { ConvertOptions } from "./types/mapping.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const HELP = `
 latex2plain — Convert LaTeX math notation in Markdown to plain Unicode text
@@ -34,6 +34,8 @@ OPTIONS
       --no-fractions    Skip fraction conversion
       --no-roots        Skip root conversion
       --no-mappings     Skip symbol mapping (greek, operators, arrows)
+      --no-stripping    Skip stripping wrapper commands (font, color, accents, etc.)
+      --no-environments Skip environment stripping (\\begin{...}/\\end{...})
 
 EXAMPLES
   latex2plain notes.md                # Overwrite notes.md in place
@@ -186,6 +188,12 @@ export async function runCLI(argv: string[]): Promise<void> {
                 break;
             case "--no-mappings":
                 opts.noMappings = true;
+                break;
+            case "--no-stripping":
+                opts.noStripping = true;
+                break;
+            case "--no-environments":
+                opts.noEnvironments = true;
                 break;
             default:
                 if (!arg.startsWith("-")) positional.push(arg);

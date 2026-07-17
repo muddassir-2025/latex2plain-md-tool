@@ -17,5 +17,7 @@ export interface ConvertOptions {
     noFractions?: boolean;
     noRoots?: boolean;
     noMappings?: boolean;
+    noStripping?: boolean;
+    noEnvironments?: boolean;
     yes?: boolean;
 }

@@ -8,39 +8,13 @@
  *   \sqrt[4]{x}  →  ∜x
  */
 
+import { extractBraced } from "./utils.js";
+
 const NTH_ROOT_SYMBOLS: Record<string, string> = {
     "2": "√",
     "3": "∛",
     "4": "∜",
 };
-
-/**
- * Extract brace-balanced content starting at position `start` where text[start] === '{'.
- * Returns [content, indexAfterClosingBrace].
- */
-function extractBraced(text: string, start: number): [string, number] {
-    let depth = 0;
-    let i = start;
-    let content = "";
-
-    for (; i < text.length; i++) {
-        if (text[i] === "{") {
-            if (depth === 0) {
-                depth++;
-                continue;
-            }
-            depth++;
-            content += text[i];
-        } else if (text[i] === "}") {
-            depth--;
-            if (depth === 0) return [content, i + 1];
-            content += text[i];
-        } else {
-            content += text[i];
-        }
-    }
-    return [content, i];
-}
 
 /**
  * Format the radicand: single-token gets no parens, expressions get parens.

@@ -26,7 +26,9 @@ export function stripInvisibleDelimiters(text: string): string {
 }
 
 /**
- * Strip font commands.
+ * Strip font commands: \mathrm, \mathbf, \mathit, \mathsf, \mathtt,
+ * \mathnormal, \mathcal, \operatorname, \boldsymbol, \textbf,
+ * \textit, \textrm, \emph.
  */
 export function stripFontCommands(text: string): string {
     const fontCmds = [
@@ -38,6 +40,11 @@ export function stripFontCommands(text: string): string {
         "\\\\mathnormal",
         "\\\\mathcal",
         "\\\\operatorname",
+        "\\\\boldsymbol",
+        "\\\\textbf",
+        "\\\\textit",
+        "\\\\textrm",
+        "\\\\emph",
     ];
     for (const cmd of fontCmds) {
         text = stripBraceCommand(text, new RegExp(cmd));
@@ -56,8 +63,6 @@ export function stripColorCommands(text: string): string {
 
 /**
  * Strip \cancel{...} and \cancelto{...}{...}.
- * \cancel{x} → x
- * \cancelto{0}{x} → 0  (keep the "to" value / destination)
  */
 export function stripCancelCommands(text: string): string {
     text = stripCancelTo(text);
@@ -82,10 +87,12 @@ export function stripUnderlineOverline(text: string): string {
 }
 
 /**
- * Strip \boxed{...}
+ * Strip \boxed{...}, \fbox{...}
  */
-export function stripBoxed(text: string): string {
-    return stripBraceCommand(text, /\\boxed/);
+export function stripBoxes(text: string): string {
+    text = stripBraceCommand(text, /\\boxed/);
+    text = stripBraceCommand(text, /\\fbox/);
+    return text;
 }
 
 /**
@@ -108,8 +115,9 @@ export function stripPhantomCommands(text: string): string {
 }
 
 /**
- * Strip accent commands: \vec{}, \hat{}, \bar{}, \tilde{},
- * \dot{}, \ddot{}, \check{}, \breve{}, \acute{}, \grave{}.
+ * Strip accents: \vec{}, \hat{}, \bar{}, \tilde{},
+ * \dot{}, \ddot{}, \check{}, \breve{}, \acute{}, \grave{},
+ * \widehat{}, \widetilde{}.
  */
 export function stripAccents(text: string): string {
     const accentCmds = [
@@ -123,10 +131,21 @@ export function stripAccents(text: string): string {
         /\\breve/g,
         /\\acute/g,
         /\\grave/g,
+        /\\widehat/g,
+        /\\widetilde/g,
     ];
     for (const pattern of accentCmds) {
         text = stripBraceCommand(text, pattern);
     }
+    return text;
+}
+
+/**
+ * Strip extensible arrows: \xrightarrow{text} → text, \xleftarrow{text} → text.
+ */
+export function stripExtensibleArrows(text: string): string {
+    text = stripBraceCommand(text, /\\xrightarrow/);
+    text = stripBraceCommand(text, /\\xleftarrow/);
     return text;
 }
 
@@ -248,7 +267,7 @@ function stripColorTextCommand(text: string): string {
 
 /**
  * Strip \cancelto{to}{content}.
- * \cancelto{0}{x} → 0  (keep the "to" value, discard the canceled expression)
+ * \cancelto{0}{x} → 0  (keep the "to" value)
  */
 function stripCancelTo(text: string): string {
     let result = "";
@@ -267,10 +286,8 @@ function stripCancelTo(text: string): string {
         while (pos < text.length && text[pos] === " ") pos++;
 
         if (pos < text.length && text[pos] === "{") {
-            // First brace: the "to" value (destination) — KEEP this
             const [toValue, afterTo] = extractBraced(text, pos);
 
-            // Second brace: the canceled expression — DISCARD this
             let after = afterTo;
             while (after < text.length && text[after] === " ") after++;
 
@@ -279,7 +296,6 @@ function stripCancelTo(text: string): string {
                 result += toValue;
                 i = afterClose;
             } else {
-                // No second brace — keep the "to" value
                 result += toValue;
                 i = afterTo;
             }

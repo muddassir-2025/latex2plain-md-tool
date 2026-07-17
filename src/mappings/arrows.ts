@@ -1,0 +1,27 @@
+import { Mapping } from "../types/mapping.js";
+
+export const arrows: Mapping[] = [
+    { pattern: /\\rightarrow/g,       replacement: "→" },
+    { pattern: /\\to\b/g,             replacement: "→" },
+    { pattern: /\\leftarrow/g,        replacement: "←" },
+    { pattern: /\\gets\b/g,           replacement: "←" },
+    { pattern: /\\leftrightarrow/g,   replacement: "↔" },
+    { pattern: /\\Rightarrow/g,       replacement: "⇒" },
+    { pattern: /\\Leftarrow/g,        replacement: "⇐" },
+    { pattern: /\\Leftrightarrow/g,   replacement: "⟺" },
+    { pattern: /\\iff/g,              replacement: "⟺" },
+    { pattern: /\\implies/g,          replacement: "⟹" },
+    { pattern: /\\mapsto/g,           replacement: "↦" },
+    { pattern: /\\uparrow/g,          replacement: "↑" },
+    { pattern: /\\downarrow/g,        replacement: "↓" },
+    { pattern: /\\updownarrow/g,      replacement: "↕" },
+    { pattern: /\\Uparrow/g,          replacement: "⇑" },
+    { pattern: /\\Downarrow/g,        replacement: "⇓" },
+    { pattern: /\\nearrow/g,          replacement: "↗" },
+    { pattern: /\\searrow/g,          replacement: "↘" },
+    { pattern: /\\swarrow/g,          replacement: "↙" },
+    { pattern: /\\nwarrow/g,          replacement: "↖" },
+    { pattern: /\\longrightarrow/g,   replacement: "⟶" },
+    { pattern: /\\longleftarrow/g,    replacement: "⟵" },
+    { pattern: /\\longleftrightarrow/g, replacement: "⟷" },
+];

@@ -11,6 +11,8 @@
  */
 
 import { extractBraced, formatFracPart } from "./utils.js";
+import { convertRoots } from "./roots.js";
+import { convertInner } from "./convert-inner.js";
 
 /**
  * A single non-braced fraction argument (e.g. a digit, letter, or Greek char).
@@ -103,7 +105,18 @@ export function convertFractions(text: string): string {
             }
         }
 
-        result += "(" + formatFracPart(num) + "/" + formatFracPart(den) + ")";
+        // Recursively convert numerator and denominator first
+        // Apply fractions (for same-type nesting), roots (for cross-type), and
+        // the injected pipeline (for all other conversions).
+        let convertedNum = convertFractions(num);
+        convertedNum = convertRoots(convertedNum);
+        convertedNum = convertInner(convertedNum);
+
+        let convertedDen = convertFractions(den);
+        convertedDen = convertRoots(convertedDen);
+        convertedDen = convertInner(convertedDen);
+
+        result += "(" + formatFracPart(convertedNum) + "/" + formatFracPart(convertedDen) + ")";
         i = afterDen;
     }
 

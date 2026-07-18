@@ -33,4 +33,8 @@ describe("convertRoots", () => {
     it("converts \\sqrt{n} → √n", () => {
         expect(convertRoots("\\sqrt{n}")).toBe("√n");
     });
+
+    it("converts root with fraction: \\sqrt{\\frac{a}{b}} → √((a/b))", () => {
+        expect(convertRoots("\\sqrt{\\frac{a}{b}}")).toBe("√((a/b))");
+    });
 });

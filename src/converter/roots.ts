@@ -8,7 +8,9 @@
  *   \sqrt[4]{x}  →  ∜x
  */
 
-import { extractBraced } from "./utils.js";
+import { extractBraced, formatFracPart } from "./utils.js";
+import { convertFractions } from "./fractions.js";
+import { convertInner } from "./convert-inner.js";
 
 const NTH_ROOT_SYMBOLS: Record<string, string> = {
     "2": "√",
@@ -54,8 +56,12 @@ export function convertRoots(text: string): string {
         // Extract the radicand from { }
         if (pos < text.length && text[pos] === "{") {
             const [inner, afterClose] = extractBraced(text, pos);
+            // Recursively convert the radicand
+            let convertedRadicand = convertRoots(inner);      // same-type nesting
+            convertedRadicand = convertFractions(convertedRadicand); // cross-type
+            convertedRadicand = convertInner(convertedRadicand);     // injected pipeline
             const symbol = NTH_ROOT_SYMBOLS[nthRoot] ?? `${nthRoot}√`;
-            result += `${symbol}${formatRadicand(inner)}`;
+            result += `${symbol}${formatRadicand(convertedRadicand)}`;
             i = afterClose;
         } else {
             // No braces — grab one token

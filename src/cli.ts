@@ -7,7 +7,7 @@ import { ConvertOptions } from "./types/mapping.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const VERSION = "0.2.2";
+const VERSION = "0.2.4";
 
 const HELP = `
 latex2plain — Convert LaTeX math notation in Markdown to plain Unicode text

@@ -81,7 +81,7 @@ export function convertTag(text: string): string {
 
         // Extract inner content and wrap in parentheses
         const inner = text.slice(start, j);
-        result += `(${inner.trim()})`;
+        result += `──────── (${inner.trim()})`;
         i = j + 1; // skip the closing }
     }
 

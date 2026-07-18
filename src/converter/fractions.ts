@@ -103,7 +103,7 @@ export function convertFractions(text: string): string {
             }
         }
 
-        result += formatFracPart(num) + "/" + formatFracPart(den);
+        result += "(" + formatFracPart(num) + "/" + formatFracPart(den) + ")";
         i = afterDen;
     }
 

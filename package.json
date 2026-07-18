@@ -1,6 +1,6 @@
 {
   "name": "latex2plain",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "Convert LaTeX math notation in Markdown files to plain Unicode text",
   "type": "module",
   "main": "./dist/index.js",

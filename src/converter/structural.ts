@@ -106,7 +106,7 @@ export function convertNotag(text: string): string {
  */
 export function convertOver(text: string): string {
     return text.replace(/\{([^}]*)\s*\\over\s*([^}]*)\}/g, function (_match: string, num: string, den: string) {
-        return formatFracPart(num) + "/" + formatFracPart(den);
+        return "(" + formatFracPart(num) + "/" + formatFracPart(den) + ")";
     });
 }
 
@@ -124,6 +124,6 @@ export function convertChoose(text: string): string {
  */
 export function convertAtop(text: string): string {
     return text.replace(/\{([^}]*)\s*\\atop\s*([^}]*)\}/g, function (_match: string, top: string, bottom: string) {
-        return formatFracPart(top) + " / " + formatFracPart(bottom);
+        return "(" + formatFracPart(top) + " / " + formatFracPart(bottom) + ")";
     });
 }

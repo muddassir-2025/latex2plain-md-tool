@@ -19,18 +19,31 @@ describe("stripEnvironments", () => {
         expect(result).toContain("E = mc^2");
     });
 
-    it("strips \\begin{bmatrix}...\\end{bmatrix}", () => {
+    it("strips \\begin{bmatrix}...\\end{bmatrix} with brackets", () => {
         const input = "\\begin{bmatrix}\n1 & 2 \\\\\n3 & 4\n\\end{bmatrix}";
         const result = stripEnvironments(input);
         expect(result).not.toContain("\\begin{bmatrix}");
         expect(result).not.toContain("\\end{bmatrix}");
-        expect(result).toContain("1");
-        expect(result).toContain("2");
-        expect(result).toContain("3");
-        expect(result).toContain("4");
+        expect(result).toBe("[1 2 ; 3 4]");
     });
 
-    it("converts \\\\ to ; inside environments", () => {
+    it("wraps pmatrix with parentheses", () => {
+        const input = "\\begin{pmatrix}\na & b \\\\\nc & d\n\\end{pmatrix}";
+        expect(stripEnvironments(input)).toBe("(a b ; c d)");
+    });
+
+    it("wraps vmatrix with vertical bars", () => {
+        const input = "\\begin{vmatrix}\n1 & 2 \\\\\n3 & 4\n\\end{vmatrix}";
+        expect(stripEnvironments(input)).toBe("|1 2 ; 3 4|");
+    });
+
+    it("wraps Vmatrix with double vertical bars", () => {
+        const input = "\\begin{Vmatrix}\na & b\n\\end{Vmatrix}";
+        const result = stripEnvironments(input);
+        expect(result).toBe("\u2016a b\u2016");
+    });
+
+    it("leaves plain matrix without delimiters", () => {
         const input = "\\begin{matrix}\na \\\\ b\n\\end{matrix}";
         expect(stripEnvironments(input)).toBe("a ; b");
     });

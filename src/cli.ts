@@ -3,7 +3,9 @@ import path from "path";
 import { readFile, readStdin, isStdinPiped } from "./io/reader.js";
 import { writeFile, writeStdout, isStdoutPiped } from "./io/writer.js";
 import { convert } from "./converter/index.js";
-import { ConvertOptions } from "./types/mapping.js";
+import { convertToHtml } from "./html.js";
+import { PDF_STYLE } from "./pdf-style.js";
+import type { ConvertOptions } from "./types/mapping.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -20,6 +22,9 @@ USAGE
 ARGUMENTS
   input     Path to input .md file (omit to read from stdin)
   output    Path to output file   (omit to write to stdout or overwrite input)
+            .md   → writes plain Markdown
+            .html → writes an accessible HTML page
+            .pdf  → generates a PDF from the converted output
 
 OPTIONS
   -h, --help            Show this help message
@@ -28,6 +33,7 @@ OPTIONS
       --dry-run         Run conversion and print output, but don't write files
       --diff            Show a simple before/after diff of changes
       --stdin           Force reading from stdin
+      --html            Force HTML output (useful with stdin)
       --verbose         Print each conversion stage that ran
       --no-subscripts   Skip subscript conversion
       --no-superscripts Skip superscript conversion
@@ -40,6 +46,8 @@ OPTIONS
 EXAMPLES
   latex2plain notes.md                # Overwrite notes.md in place
   latex2plain notes.md clean.md       # Write to clean.md
+  latex2plain notes.md clean.pdf      # Convert and generate PDF
+  latex2plain notes.md clean.html      # Convert and generate HTML
   latex2plain notes.md --dry-run      # Preview output
   cat notes.md | latex2plain          # Read stdin, write stdout
   latex2plain docs/                   # Convert all .md files in docs/
@@ -96,31 +104,74 @@ async function processFile(
     inputPath: string,
     outputPath: string | null,
     opts: ConvertOptions,
-    flags: { dryRun: boolean; diff: boolean; verbose: boolean; yes: boolean },
+    flags: { dryRun: boolean; diff: boolean; verbose: boolean; yes: boolean; html: boolean },
 ): Promise<void> {
     const input = await readFile(inputPath);
-    const output = convert(input, opts);
+    const converted = convert(input, opts);
 
     if (flags.diff) {
         console.log(`\n── diff: ${inputPath} ──`);
-        console.log(simpleDiff(input, output));
+        console.log(simpleDiff(input, converted));
         return;
     }
 
     if (flags.dryRun) {
         console.log(`\n── dry-run: ${inputPath} ──`);
-        writeStdout(output);
+        writeStdout(converted);
         return;
     }
 
     const dest = outputPath ?? inputPath;
 
+    // ── HTML output ───────────────────────────────────────────────────────────
+    if (dest.endsWith(".html") || flags.html) {
+        const title = path.basename(inputPath, path.extname(inputPath));
+        const html = convertToHtml(converted, title);
+        if (flags.html && !dest.endsWith(".html")) {
+            // --html flag with no .html file → write to stdout, no status message
+            writeStdout(html);
+            return;
+        }
+        await writeFile(dest, html);
+        if (!flags.verbose && !isStdoutPiped()) {
+            console.log(`✔  ${inputPath} → ${dest}`);
+        }
+        return;
+    }
+
+    // ── PDF output ────────────────────────────────────────────────────────────
+    if (dest.endsWith(".pdf")) {
+        try {
+            const { mdToPdf } = await import("md-to-pdf");
+            await mdToPdf(
+                { content: converted },
+                {
+                    dest,
+                    css: PDF_STYLE,
+                    pdf_options: {
+                        format: "A4",
+                        margin: { top: "0.78in", bottom: "0.78in", left: "0.9in", right: "0.9in" },
+                        printBackground: true,
+                    },
+                },
+            );
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            throw new Error(`PDF generation failed: ${message}`);
+        }
+        if (!flags.verbose && !isStdoutPiped()) {
+            console.log(`✔  ${inputPath} → ${dest}`);
+        }
+        return;
+    }
+
+    // ── Plain Markdown output (existing behavior) ────────────────────────────
     if (!outputPath && !flags.yes) {
         // In-place overwrite — warn but proceed (use --yes to silence)
         console.log(`⚠  Overwriting ${inputPath} (use --yes to suppress this message)`);
     }
 
-    await writeFile(dest, output);
+    await writeFile(dest, converted);
 
     if (!flags.verbose && !isStdoutPiped()) {
         console.log(`✔  ${inputPath} → ${dest}`);
@@ -139,6 +190,7 @@ export async function runCLI(argv: string[]): Promise<void> {
         stdin: false,
         verbose: false,
         yes: false,
+        html: false,
     };
 
     const opts: ConvertOptions = {};
@@ -166,6 +218,9 @@ export async function runCLI(argv: string[]): Promise<void> {
             case "--diff":
                 flags.diff = true;
                 opts.diff = true;
+                break;
+            case "--html":
+                flags.html = true;
                 break;
             case "--stdin":
                 flags.stdin = true;

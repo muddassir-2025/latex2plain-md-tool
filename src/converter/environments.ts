@@ -19,6 +19,14 @@
  *   \\  →  ;    (line break → semicolon)
  *   &   →  (removed, separator becomes space)
  *
+ * Matrix environments get additional delimiters:
+ *   matrix      →  (no delimiters)
+ *   pmatrix     →  ( ... )
+ *   bmatrix     →  [ ... ]
+ *   vmatrix     →  | ... |
+ *   Vmatrix     →  ‖ ... ‖
+ *   smallmatrix →  (no delimiters, inline style uses semicolons)
+ *
  * The approach: identify all \begin{...}...\end{...} blocks and process them.
  */
 
@@ -53,6 +61,36 @@ const KNOWN_ENVIRONMENTS = [
     "alignat",
     "alignat*",
 ];
+
+/** Matrix environment names (these get delimiters and 2D formatting). */
+const MATRIX_ENVIRONMENTS = new Set([
+    "matrix",
+    "pmatrix",
+    "bmatrix",
+    "vmatrix",
+    "Vmatrix",
+    "smallmatrix",
+]);
+
+/**
+ * Get the opening and closing delimiters for a matrix environment.
+ */
+function getMatrixDelimiters(envName: string): [string, string] {
+    switch (envName) {
+        case "pmatrix":
+            return ["(", ")"];
+        case "bmatrix":
+            return ["[", "]"];
+        case "vmatrix":
+            return ["|", "|"];
+        case "Vmatrix":
+            return ["\u2016", "\u2016"]; // ‖ (double vertical line)
+        case "matrix":
+        case "smallmatrix":
+        default:
+            return ["", ""];
+    }
+}
 
 /**
  * Strip \begin{env} and \end{env} markers, converting \\ and & inside.
@@ -106,7 +144,14 @@ export function stripEnvironments(text: string): string {
             .replace(/\s+/g, " ")
             .trim();
 
-        result += processed;
+        // For matrix environments, wrap with delimiters
+        if (MATRIX_ENVIRONMENTS.has(envName)) {
+            const [left, right] = getMatrixDelimiters(envName);
+            result += `${left}${processed}${right}`;
+        } else {
+            result += processed;
+        }
+
         i = endIdx + endTag.length;
     }
 

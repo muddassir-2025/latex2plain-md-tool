@@ -1,6 +1,6 @@
 {
   "name": "latex2plain",
-  "version": "0.2.5",
+  "version": "1.0.2",
   "description": "Convert LaTeX math notation in Markdown files to plain Unicode text",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,16 +28,22 @@
     "unicode",
     "math",
     "cli",
-    "converter"
+    "converter",
+    "notation",
+    "plain-text",
+    "mathematics",
+    "symbols"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@types/node": "^22.20.1",
+    "md-to-pdf": "^5.2.5",
     "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/pdfkit": "^0.17.6",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.5",

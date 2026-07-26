@@ -3,6 +3,7 @@ import path from "path";
 import { readFile, readStdin, isStdinPiped } from "./io/reader.js";
 import { writeFile, writeStdout, isStdoutPiped } from "./io/writer.js";
 import { convert } from "./converter/index.js";
+import { highlightCodeBlocks } from "./converter/highlighting.js";
 import { convertToHtml } from "./html.js";
 import { PDF_STYLE } from "./pdf-style.js";
 import type { ConvertOptions } from "./types/mapping.js";
@@ -144,9 +145,10 @@ async function processFile(
     // ── PDF output ────────────────────────────────────────────────────────────
     if (dest.endsWith(".pdf")) {
         try {
+            const highlighted = highlightCodeBlocks(converted);
             const { mdToPdf } = await import("md-to-pdf");
             await mdToPdf(
-                { content: converted },
+                { content: highlighted },
                 {
                     dest,
                     css: PDF_STYLE,

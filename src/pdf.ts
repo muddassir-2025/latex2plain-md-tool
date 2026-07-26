@@ -9,6 +9,7 @@
  */
 
 import { convert } from "./converter/index.js";
+import { highlightCodeBlocks } from "./converter/highlighting.js";
 import { PDF_STYLE } from "./pdf-style.js";
 import type { ConvertOptions } from "./types/mapping.js";
 
@@ -27,7 +28,10 @@ export async function convertToPdfBuffer(
     // Step 1 — run through the existing LaTeX-to-Unicode pipeline
     const converted = convert(markdown, opts);
 
-    // Step 2 — render to PDF via md-to-pdf (headless Chrome/Puppeteer)
+    // Step 2 — apply syntax highlighting to fenced code blocks
+    const highlighted = highlightCodeBlocks(converted);
+
+    // Step 3 — render to PDF via md-to-pdf (headless Chrome/Puppeteer)
     let mdToPdf: (content: { content: string }, options?: Record<string, unknown>) => Promise<{ content: Buffer }>;
 
     try {
@@ -39,7 +43,7 @@ export async function convertToPdfBuffer(
     }
 
     const pdf = await mdToPdf(
-        { content: converted },
+        { content: highlighted },
         {
             css: PDF_STYLE,
             pdf_options: {

@@ -64,7 +64,9 @@ export function convertSubscripts(text: string): string {
     });
 
     // Handle single char subscript: _a, _n, _x (one char)
-    text = text.replace(/_([a-zA-Z0-9])/g, (_match, ch: string) => {
+    // Only match when the captured char is NOT followed by another alphanumeric
+    // (avoids converting word-internal underscores like `page_name` → `pageₙame`)
+    text = text.replace(/_([a-zA-Z0-9])(?![a-zA-Z0-9])/g, (_match, ch: string) => {
         return toSubscript(ch);
     });
 

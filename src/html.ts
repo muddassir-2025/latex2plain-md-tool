@@ -5,6 +5,7 @@
  *  1. Performs basic Markdown → HTML conversion (headings, code blocks, lists, etc.)
  *  2. Wraps the result in a responsive, accessible HTML5 page
  *  3. Adds ARIA labels for math symbols, semantic landmarks, and dark mode
+ *  4. Applies syntax highlighting to fenced code blocks
  */
 
 // ─── Math symbol → aria-label mapping ──────────────────────────────────────
@@ -120,6 +121,8 @@ const MATH_ARIA_LABELS: Record<string, string> = {
     "\u2228": "logical or",
 };
 
+import hljs from "highlight.js";
+
 /**
  * Escape HTML special characters in a text fragment.
  */
@@ -212,10 +215,25 @@ function markdownToHtml(markdown: string): string {
         // ── Code blocks ──────────────────────────────────────────────────────
         if (line.startsWith("```")) {
             if (inCodeBlock) {
-                const langAttr = codeBlockLang
-                    ? ` class="language-${escapeHtml(codeBlockLang)}"`
-                    : "";
-                html.push(`<pre><code${langAttr}>${codeBuffer.join("\n")}</code></pre>`);
+                const codeText = codeBuffer.join("\n");
+                const lang = codeBlockLang;
+                const escapedLang = lang ? escapeHtml(lang) : "";
+                // Apply syntax highlighting if a recognised language is given
+                let codeHtml: string;
+                let className: string;
+                if (lang && hljs.getLanguage(lang)) {
+                    try {
+                        codeHtml = hljs.highlight(codeText, { language: lang }).value;
+                        className = `hljs language-${escapedLang}`;
+                        html.push(`<pre><code class="${className}">${codeHtml}</code></pre>`);
+                    } catch {
+                        html.push(`<pre><code class="language-${escapedLang}">${escapeHtml(codeText)}</code></pre>`);
+                    }
+                } else if (lang) {
+                    html.push(`<pre><code class="language-${escapedLang}">${escapeHtml(codeText)}</code></pre>`);
+                } else {
+                    html.push(`<pre><code>${escapeHtml(codeText)}</code></pre>`);
+                }
                 codeBuffer.length = 0;
                 codeBlockLang = "";
                 inCodeBlock = false;
@@ -304,7 +322,20 @@ function markdownToHtml(markdown: string): string {
 
     // Flush remaining code block or list
     if (inCodeBlock) {
-        html.push(`<pre><code>${codeBuffer.join("\n")}</code></pre>`);
+        const codeText = codeBuffer.join("\n");
+        const escapedLang = codeBlockLang ? escapeHtml(codeBlockLang) : "";
+        if (codeBlockLang && hljs.getLanguage(codeBlockLang)) {
+            try {
+                const highlighted = hljs.highlight(codeText, { language: codeBlockLang }).value;
+                html.push(`<pre><code class="hljs language-${escapedLang}">${highlighted}</code></pre>`);
+            } catch {
+                html.push(`<pre><code class="language-${escapedLang}">${escapeHtml(codeText)}</code></pre>`);
+            }
+        } else if (escapedLang) {
+            html.push(`<pre><code class="language-${escapedLang}">${escapeHtml(codeText)}</code></pre>`);
+        } else {
+            html.push(`<pre><code>${escapeHtml(codeText)}</code></pre>`);
+        }
     }
     flushList();
 
@@ -475,6 +506,41 @@ export function convertToHtml(
             padding: 0;
             font-size: 0.85rem;
             line-height: 1.5;
+        }
+
+        /* ── Syntax highlighting (highlight.js GitHub theme) ────────── */
+        .hljs { color: #24292e; background: transparent; }
+        .hljs-doctag, .hljs-keyword, .hljs-meta .hljs-keyword,
+        .hljs-template-tag, .hljs-template-variable, .hljs-type,
+        .hljs-variable.language_ { color: #d73a49; }
+        .hljs-title, .hljs-title.class_, .hljs-title.class_.inherited__,
+        .hljs-title.function_ { color: #6f42c1; }
+        .hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta,
+        .hljs-number, .hljs-operator, .hljs-variable,
+        .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id { color: #005cc5; }
+        .hljs-regexp, .hljs-string, .hljs-meta .hljs-string { color: #032f62; }
+        .hljs-built_in, .hljs-symbol { color: #e36209; }
+        .hljs-comment, .hljs-code, .hljs-formula { color: #6a737d; }
+        .hljs-name, .hljs-quote, .hljs-selector-tag,
+        .hljs-selector-pseudo { color: #22863a; }
+        .hljs-subst { color: #24292e; }
+        .hljs-section { color: #005cc5; font-weight: bold; }
+        .hljs-bullet { color: #735c0f; }
+        .hljs-emphasis { color: #24292e; font-style: italic; }
+        .hljs-strong { color: #24292e; font-weight: bold; }
+        .hljs-addition { color: #22863a; background-color: #f0fff4; }
+        .hljs-deletion { color: #b31d28; background-color: #ffeef0; }
+        .hljs-char.escape_, .hljs-link, .hljs-params,
+        .hljs-property, .hljs-punctuation, .hljs-tag { }
+
+        @media (prefers-color-scheme: dark) {
+            .hljs { color: #e7e5e4; }
+            .hljs-keyword, .hljs-type { color: #f78c6c; }
+            .hljs-title, .hljs-title.function_ { color: #82aaff; }
+            .hljs-number, .hljs-literal { color: #ff5370; }
+            .hljs-string { color: #c3e88d; }
+            .hljs-comment { color: #676e95; }
+            .hljs-built_in { color: #ffcb6b; }
         }
 
         /* ── Lists ───────────────────────────────────────────────────── */

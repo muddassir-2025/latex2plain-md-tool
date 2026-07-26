@@ -20,4 +20,5 @@ export interface ConvertOptions {
     noStripping?: boolean;
     noEnvironments?: boolean;
     yes?: boolean;
+    smartFormat?: boolean;
 }

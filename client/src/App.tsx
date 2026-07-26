@@ -3,8 +3,12 @@ import "./App.css";
 
 // ─── Config ──────────────────────────────────────────────────────────────
 
-/** API base URL — uses Vite proxy in dev, env variable in production. */
-const API_BASE = import.meta.env.VITE_API_URL || "";
+/** API base URL — uses direct backend URL in dev (Vite proxy is unreliable on Windows).
+ * In production, uses relative path since backend serves both frontend and API.
+ * To override, set VITE_API_URL env var (e.g. VITE_API_URL=http://localhost:4000). */
+const API_BASE = import.meta.env.DEV
+    ? (import.meta.env.VITE_API_URL || "http://localhost:3001")
+    : (import.meta.env.VITE_API_URL || "");
 
 const REQUEST_TIMEOUT_MS = 90_000; // 90 seconds (Render cold start can be slow)
 
@@ -23,6 +27,7 @@ export default function App() {
     const [conversionTime, setConversionTime] = useState(0);
     const [file, setFile] = useState<File | null>(null);
     const [dragOver, setDragOver] = useState(false);
+    const [smartFormat, setSmartFormat] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -120,7 +125,7 @@ export default function App() {
                 setStatus("error");
                 return;
             }
-            body = JSON.stringify({ markdown: text });
+            body = JSON.stringify({ markdown: text, smartFormat });
         } else {
             // Upload mode
             if (!file) {
@@ -130,6 +135,7 @@ export default function App() {
             }
             const formData = new FormData();
             formData.append("file", file);
+            formData.append("smartFormat", String(smartFormat));
             body = formData;
             isFormData = true;
         }
@@ -217,6 +223,11 @@ export default function App() {
     const isPasteValid = mode === "paste" && pasteText.trim().length > 0;
     const isUploadValid = mode === "upload" && file !== null;
     const canConvert = (isPasteValid || isUploadValid) && status !== "converting";
+
+    // ── Smart Format description ──────────────────────────────────────
+    const smartFormatTooltip =
+        "Auto-detect headings, code blocks, math formulas, definitions, and more " +
+        "from raw unstructured text before conversion.";
 
     // ─── Render ────────────────────────────────────────────────────────
 
@@ -360,6 +371,30 @@ export default function App() {
                                 )}
                             </div>
                         )}
+
+                        {/* ── Smart Format toggle ────────────────────── */}
+                        <div className="smart-format-row">
+                            <label className="toggle-label" title={smartFormatTooltip}>
+                                <span className="toggle-switch">
+                                    <input
+                                        type="checkbox"
+                                        id="smart-format-toggle"
+                                        name="smartFormat"
+                                        checked={smartFormat}
+                                        onChange={(e) => setSmartFormat(e.target.checked)}
+                                        disabled={status === "converting"}
+                                        aria-label="Enable smart formatting"
+                                    />
+                                    <span className="toggle-slider" />
+                                </span>
+                                <span className="toggle-text">
+                                    <span className="toggle-title">Smart Format</span>
+                                    <span className="toggle-desc">
+                                        Auto-detect headings, code, math
+                                    </span>
+                                </span>
+                            </label>
+                        </div>
 
                         {/* ── Convert button ────────────────────────── */}
                         <button

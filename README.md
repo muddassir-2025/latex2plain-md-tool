@@ -78,6 +78,9 @@ latex2plain notes.md --diff
 # Read from stdin, write to stdout
 cat notes.md | latex2plain
 
+# Smart-format raw study notes before conversion
+latex2plain notes.md --smart-format clean.md
+
 # Convert all .md files in a directory (recursive)
 latex2plain docs/
 ```
@@ -100,6 +103,7 @@ latex2plain docs/
 | `--no-mappings` | Skip symbol mapping |
 | `--no-stripping` | Skip stripping wrapper commands (font, color, accents, boxes, etc.) |
 | `--no-environments` | Skip environment stripping (`\begin{...}`/`\end{...}`) |
+| `-s, --smart-format` | Auto-format raw text into structured Markdown before conversion |
 
 ---
 
@@ -111,6 +115,7 @@ latex2plain includes a full web application where users can convert Markdown and
 
 - **Paste text** — Type or paste Markdown/LaTeX directly into the editor
 - **Upload files** — Upload `.md` or `.txt` files (drag & drop supported)
+- **Smart Format toggle** — Auto-detect headings, code blocks, math formulas, definitions, and more from raw unstructured text before conversion
 - **Generate PDF** — Click "Convert to PDF" to download the result
 - **Cold-start UX** — Time-based loading messages inform users when the Render backend is waking up from inactivity
 - **Responsive design** — Works on mobile, tablet, and desktop
@@ -123,6 +128,31 @@ Visit the live web app (if deployed) or run locally (see [Local Development](#lo
 ---
 
 ## Conversion Pipeline
+
+### Smart Format (pre-processing)
+
+The optional **Smart Format** stage runs before the main conversion pipeline when `--smart-format` is enabled. It analyzes raw unstructured text and produces structured Markdown:
+
+| Detection | Raw Input | Formatted Output |
+|-----------|-----------|------------------|
+| Headings | `chapter 1: calculus review` | `# chapter 1: calculus review` |
+| Sub-headings | `2.1 Methodology` | `### Methodology` |
+| Code blocks | `def factorial(n):` / `import numpy` | ` ```python ... ``` ` |
+| Math expressions | `int_a^b f(x) dx` | `$$int_a^b f(x) dx$$` |
+| Definitions | `def: A function maps...` | `**Definition:** A function maps...` |
+| Notes/Callouts | `note: Remember to check...` | `> **Note:** Remember to check...` |
+| Examples | `example: Compute the derivative` | `**Example:** Compute the derivative` |
+| Formulas | `formula: E = mc^2` | `$$E = mc^2$$` |
+| Implicit lists | `Logistic regression - 87.3%` | `- Logistic regression — 87.3%` |
+| Bare URLs | `https://example.com` | `[example.com](https://example.com)` |
+
+This is especially useful for:
+- Raw study notes from lectures or textbooks
+- ChatGPT output with code, math, and explanations mixed together
+- Research paper drafts with section titles but no markdown formatting
+- Any unstructured text with embedded code, math, or structured content
+
+### Main Pipeline
 
 | Stage | Input | Output |
 |-------|-------|--------|
@@ -193,7 +223,7 @@ npm run dev:client
 # Run both backend + frontend in development
 npm run dev:all
 
-# Run tests (242 tests across converter + server)
+# Run tests (343 tests across 15 test files)
 npm test
 
 # Run lint
@@ -286,7 +316,15 @@ cp .env.example .env
 ## Architecture
 
 ```
-                    latex2plain core (src/converter/)
+        Raw unstructured text (study notes, ChatGPT output, …)
+                           │
+                           ▼
+               Smart Format (src/formatter/)
+              (7-pass detection & structuring)
+                           │
+                           ▼
+                 latex2plain core (src/converter/)
+                  (LaTeX → Unicode pipeline)
                            │
               ┌────────────┴────────────┐
               │                         │
@@ -305,9 +343,10 @@ cp .env.example .env
 | Module | Location | Purpose |
 |--------|----------|---------|
 | Conversion pipeline | `src/converter/` | LaTeX → Unicode text conversion (24 stages) |
+| Smart Format | `src/formatter/` | Pre-processes raw text into structured Markdown (7-pass detection) |
 | PDF generation | `src/pdf.ts` | Wraps md-to-pdf for reusable PDF buffer output |
 | CLI | `src/cli.ts` | Command-line interface, flag parsing, file processing |
-| Web server | `src/server.ts` | Express API with health check, convert, and convert-file endpoints |
+| Web server | `src/server.ts` | Node.js HTTP server with Express API for convert/health endpoints |
 | HTML template | `src/html.ts` | Accessible HTML5 page generation |
 | PDF styles | `src/pdf-style.ts` | CSS for md-to-pdf output |
 | React frontend | `client/` | Vite + React SPA with paste/upload UI |
@@ -326,13 +365,15 @@ Both reuse the same pipeline — no shell commands, no child processes, no code 
 ## Tests
 
 ```bash
-npm test           # Run all 242 tests (13 test files)
+npm test           # Run all 343 tests (15 test files)
 npm run test:watch # Watch mode
 ```
 
 Test files cover:
 
-- All conversion pipeline stages (12 test files, 234 tests)
+- All conversion pipeline stages (12 test files, 250 tests)
+- Metadata and structure preservation (49 tests)
+- Smart Format formatting (36 tests)
 - Server API endpoints (8 tests)
 - Input validation
 - Empty inputs

@@ -1,8 +1,10 @@
 /**
  * latex2plain — Web API server
  *
+ * Uses raw Node.js HTTP server to bypass Express 5 middleware issues.
+ *
  * Provides:
- *   GET  /health         – Health check (used by frontend and Render)
+ *   GET  /health         – Health check
  *   POST /api/convert    – Convert pasted markdown/LaTeX to PDF
  *   POST /api/convert-file – Convert an uploaded .md or .txt file to PDF
  *
@@ -12,40 +14,33 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import http from "http";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { convertToPdfBuffer } from "./pdf.js";
+import { smartFormat } from "./formatter/notes.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
-
-// Detect production vs development
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const isProduction = process.env.NODE_ENV === "production";
 
-// Resolve __dirname for ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ─── Express setup ──────────────────────────────────────────────────────────
+// ─── Express app (API only) ─────────────────────────────────────────────────
 
 const app = express();
 
-// CORS — allow the Vite dev server origin in development
-app.use(
-    cors({
-        origin: isProduction
-            ? false
-            : ["http://localhost:5173", "http://localhost:4173", "http://127.0.0.1:5173"],
-    }),
-);
+app.use(cors({
+    origin: isProduction ? false : ["http://localhost:5173", "http://localhost:4173", "http://127.0.0.1:5173"],
+}));
 
-// JSON body parser with size limit
 app.use(express.json({ limit: "5mb" }));
 
-// ─── Multer (file upload) ───────────────────────────────────────────────────
+// ─── Multer ─────────────────────────────────────────────────────────────────
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -60,17 +55,15 @@ const upload = multer({
     },
 });
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
+// ─── API Routes ─────────────────────────────────────────────────────────────
 
-/** GET /health — lightweight health check */
 app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
 });
 
-/** POST /api/convert — convert pasted markdown to PDF */
 app.post("/api/convert", async (req, res, next) => {
     try {
-        const { markdown } = req.body;
+        const { markdown, smartFormat: useSmartFormat } = req.body;
 
         if (!markdown || typeof markdown !== "string" || markdown.trim().length === 0) {
             res.status(400).json({ error: "No markdown content provided." });
@@ -82,11 +75,15 @@ app.post("/api/convert", async (req, res, next) => {
             return;
         }
 
-        const pdfBuffer = await convertToPdfBuffer(markdown);
+        let content = markdown;
+        if (useSmartFormat) {
+            content = smartFormat(content);
+        }
 
+        const pdfBuffer = await convertToPdfBuffer(content);
         res.set({
             "Content-Type": "application/pdf",
-            "Content-Disposition": "attachment; filename=\"converted.pdf\"",
+            "Content-Disposition": 'attachment; filename="converted.pdf"',
             "Content-Length": pdfBuffer.length.toString(),
         });
         res.send(pdfBuffer);
@@ -95,10 +92,8 @@ app.post("/api/convert", async (req, res, next) => {
     }
 });
 
-/** POST /api/convert-file — convert an uploaded .md or .txt file to PDF */
 app.post("/api/convert-file", async (req, res, next) => {
     try {
-        // Wrap multer in a promise to catch errors cleanly
         await new Promise<void>((resolve, reject) => {
             upload.single("file")(req, res, (err) => {
                 if (err) reject(err);
@@ -112,17 +107,21 @@ app.post("/api/convert-file", async (req, res, next) => {
             return;
         }
 
-        // Convert buffer to UTF-8 string
-        const markdown = file.buffer.toString("utf-8").trim();
-        if (markdown.length === 0) {
+        let content = file.buffer.toString("utf-8").trim();
+        if (content.length === 0) {
             res.status(400).json({ error: "Uploaded file is empty." });
             return;
         }
 
-        const pdfBuffer = await convertToPdfBuffer(markdown);
+        const useSmartFormat = req.body.smartFormat === "true" || req.body.smartFormat === true;
+        if (useSmartFormat) {
+            content = smartFormat(content);
+        }
+
+        const pdfBuffer = await convertToPdfBuffer(content);
         res.set({
             "Content-Type": "application/pdf",
-            "Content-Disposition": "attachment; filename=\"converted.pdf\"",
+            "Content-Disposition": 'attachment; filename="converted.pdf"',
             "Content-Length": pdfBuffer.length.toString(),
         });
         res.send(pdfBuffer);
@@ -131,89 +130,121 @@ app.post("/api/convert-file", async (req, res, next) => {
     }
 });
 
-// ─── Serve React frontend (production) ──────────────────────────────────────
-
-if (isProduction) {
-    // Try multiple possible locations for the built client
-    const possibleDirs = [
-        path.resolve(__dirname, "..", "client", "dist"),   // dist/client/dist
-        path.resolve(__dirname, "..", "..", "client", "dist"), // project-root/client/dist
-        path.resolve(process.cwd(), "client", "dist"),       // cwd/client/dist
-    ];
-
-    let clientDist = "";
-    for (const dir of possibleDirs) {
-        if (fs.existsSync(dir)) {
-            clientDist = dir;
-            break;
-        }
-    }
-
-    if (clientDist) {
-        app.use(express.static(clientDist));
-
-        // SPA fallback — serve index.html for all non-API routes
-        // Note: Express 5 dropped bare wildcard '*' support, so we use middleware instead
-        const indexPath = path.join(clientDist, "index.html");
-        app.use((_req, res) => {
-            if (fs.existsSync(indexPath)) {
-                res.sendFile(indexPath);
-            } else {
-                res.status(404).json({ error: "Not found" });
-            }
-        });
-    } else {
-        console.warn(
-            "Warning: client/dist not found. Build the frontend with: cd client && npm run build",
-        );
-    }
-}
-
 // ─── Error handler ──────────────────────────────────────────────────────────
 
-app.use(
-    (err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-        // Multer errors
-        if (err instanceof multer.MulterError) {
-            if (err.code === "LIMIT_FILE_SIZE") {
-                res.status(400).json({ error: "File too large. Maximum size is 5 MB." });
-                return;
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+            res.status(400).json({ error: "File too large. Maximum size is 5 MB." });
+            return;
+        }
+        res.status(400).json({ error: err.message });
+        return;
+    }
+
+    if (err.message && err.message.includes("Unsupported file type")) {
+        res.status(400).json({ error: err.message });
+        return;
+    }
+
+    if (err.message && err.message.includes("PDF generation")) {
+        console.error("PDF generation error:", err.message);
+        res.status(500).json({ error: "Failed to generate PDF. Please try again." });
+        return;
+    }
+
+    console.error("Unhandled error:", err.message);
+    res.status(500).json({ error: "Internal server error." });
+});
+
+// ─── Find client/dist for production ────────────────────────────────────────
+
+let clientDist = "";
+if (isProduction) {
+    const clientDirs = [
+        path.resolve(__dirname, "..", "client", "dist"),
+        path.resolve(process.cwd(), "client", "dist"),
+    ];
+    for (const dir of clientDirs) {
+        try {
+            if (fs.existsSync(dir)) {
+                clientDist = dir;
+                break;
             }
-            res.status(400).json({ error: err.message });
-            return;
-        }
-
-        // File type validation errors (from multer fileFilter)
-        if (err.message && err.message.includes("Unsupported file type")) {
-            res.status(400).json({ error: err.message });
-            return;
-        }
-
-        // PDF generation errors
-        if (err.message && err.message.includes("PDF generation")) {
-            console.error("PDF generation error:", err.message);
-            res.status(500).json({ error: "Failed to generate PDF. Please try again." });
-            return;
-        }
-
-        // Generic server error
-        console.error("Unhandled error:", err.message);
-        res.status(500).json({ error: "Internal server error." });
-    },
-);
-
-// ─── Start (only when run directly, not when imported) ───────────────────
-
-const isMainModule = process.argv[1] &&
-    (process.argv[1].endsWith("server.js") || process.argv[1].endsWith("server.ts"));
-
-if (isMainModule) {
-    app.listen(PORT, () => {
-        console.log(`latex2plain server running on http://localhost:${PORT}`);
-        if (!isProduction) {
-            console.log("Development mode — Vite dev server expected on :5173");
-        }
-    });
+        } catch { /* ignore */ }
+    }
 }
+
+// ─── Static file MIME types ─────────────────────────────────────────────────
+
+const MIME_TYPES: Record<string, string> = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".json": "application/json; charset=utf-8",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".map": "application/json",
+};
+
+// ─── HTTP server ────────────────────────────────────────────────────────────
+
+const server = http.createServer((req, res) => {
+    const url = req.url || "/";
+
+    // ── API routes → Express ────────────────────────────────────────────
+    if (url.startsWith("/api") || url === "/health") {
+        app(req, res);
+        return;
+    }
+
+    // ── Production: serve static files ───────────────────────────────────
+    if (clientDist) {
+        const filePath = url === "/" ? "index.html" : url.slice(1);
+        const fullPath = path.join(clientDist, filePath);
+
+        // Path traversal prevention
+        if (!fullPath.startsWith(clientDist)) {
+            res.writeHead(403);
+            res.end("Forbidden");
+            return;
+        }
+
+        if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+            const ext = path.extname(filePath).toLowerCase();
+            const contentType = MIME_TYPES[ext] || "text/plain; charset=utf-8";
+            const content = fs.readFileSync(fullPath);
+            res.writeHead(200, { "Content-Type": contentType, "Content-Length": content.length });
+            res.end(content);
+            return;
+        }
+
+        // SPA fallback: serve index.html for all unmatched routes
+        const indexPath = path.join(clientDist, "index.html");
+        if (fs.existsSync(indexPath)) {
+            const content = fs.readFileSync(indexPath);
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": content.length });
+            res.end(content);
+            return;
+        }
+    }
+
+    // ── Fallback: pass to Express ────────────────────────────────────────
+    app(req, res);
+});
+
+// ─── Start ──────────────────────────────────────────────────────────────────
+
+server.listen(PORT, () => {
+    console.log(`latex2plain server running on http://localhost:${PORT}`);
+    if (clientDist) {
+        console.log(`Serving frontend from: ${clientDist}`);
+    } else if (isProduction) {
+        console.warn("Warning: client/dist not found. Build with: cd client && npm run build");
+    }
+});
 
 export default app;

@@ -4,6 +4,7 @@ import { readFile, readStdin, isStdinPiped } from "./io/reader.js";
 import { writeFile, writeStdout, isStdoutPiped } from "./io/writer.js";
 import { convert } from "./converter/index.js";
 import { highlightCodeBlocks } from "./converter/highlighting.js";
+import { smartFormat } from "./formatter/notes.js";
 import { convertToHtml } from "./html.js";
 import { PDF_STYLE } from "./pdf-style.js";
 import type { ConvertOptions } from "./types/mapping.js";
@@ -36,6 +37,7 @@ OPTIONS
       --stdin           Force reading from stdin
       --html            Force HTML output (useful with stdin)
       --verbose         Print each conversion stage that ran
+  -s, --smart-format    Auto-format raw text into structured Markdown before conversion
       --no-subscripts   Skip subscript conversion
       --no-superscripts Skip superscript conversion
       --no-fractions    Skip fraction conversion
@@ -109,7 +111,10 @@ async function processFile(
     opts: ConvertOptions,
     flags: { dryRun: boolean; diff: boolean; verbose: boolean; yes: boolean; html: boolean },
 ): Promise<void> {
-    const input = await readFile(inputPath);
+    let input = await readFile(inputPath);
+    if (opts.smartFormat) {
+        input = smartFormat(input);
+    }
     const converted = convert(input, opts);
 
     if (flags.diff) {
@@ -211,6 +216,7 @@ export async function runCLI(argv: string[]): Promise<void> {
         verbose: false,
         yes: false,
         html: false,
+        smartFormat: false,
     };
 
     const opts: ConvertOptions = {};
@@ -238,6 +244,11 @@ export async function runCLI(argv: string[]): Promise<void> {
             case "--diff":
                 flags.diff = true;
                 opts.diff = true;
+                break;
+            case "-s":
+            case "--smart-format":
+                opts.smartFormat = true;
+                flags.smartFormat = true;
                 break;
             case "--html":
                 flags.html = true;

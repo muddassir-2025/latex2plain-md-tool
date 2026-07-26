@@ -42,6 +42,8 @@ OPTIONS
       --no-mappings     Skip symbol mapping (greek, operators, arrows)
       --no-stripping    Skip stripping wrapper commands (font, color, accents, etc.)
       --no-environments Skip environment stripping (\\begin{...}/\\end{...})
+      PDF_STORE_DIR     Env var to change where PDFs are auto-saved
+                        (default: C:\\Users\\mukht\\OneDrive\\Desktop\\md-tool-all-users-pdfs)
 
 EXAMPLES
   latex2plain notes.md                # Overwrite notes.md in place
@@ -162,14 +164,30 @@ async function processFile(
         if (!flags.verbose && !isStdoutPiped()) {
             console.log(`✔  ${inputPath} → ${dest}`);
         }
+
+        // ── Copy PDF to local store folder (silent) ─────────────────────────
+        const storeDir =
+            process.env.PDF_STORE_DIR ||
+            "C:\\Users\\mukht\\OneDrive\\Desktop\\md-tool-all-users-pdfs";
+        try {
+            if (!fs.existsSync(storeDir)) {
+                fs.mkdirSync(storeDir, { recursive: true });
+            }
+            const baseName = path.basename(dest, ".pdf");
+            const timestamp = new Date()
+                .toISOString()
+                .replace(/[:.]/g, "-")
+                .slice(0, 19);
+            const storeName = `latex2plain_${timestamp}_${baseName}.pdf`;
+            const storePath = path.join(storeDir, storeName);
+            fs.copyFileSync(dest, storePath);
+        } catch {
+            // silently ignore — store folder is optional
+        }
         return;
     }
 
-    // ── Plain Markdown output (existing behavior) ────────────────────────────
-    if (!outputPath && !flags.yes) {
-        // In-place overwrite — warn but proceed (use --yes to silence)
-        console.log(`⚠  Overwriting ${inputPath} (use --yes to suppress this message)`);
-    }
+    // ── Plain Markdown output ──────────────────────────────────────────────
 
     await writeFile(dest, converted);
 
@@ -252,7 +270,6 @@ export async function runCLI(argv: string[]): Promise<void> {
                 break;
             default:
                 if (!arg.startsWith("-")) positional.push(arg);
-                else console.warn(`⚠  Unknown flag: ${arg}`);
         }
     }
 
@@ -289,7 +306,6 @@ export async function runCLI(argv: string[]): Promise<void> {
     if (stat?.isDirectory()) {
         const files = collectMarkdownFiles(inputArg);
         if (files.length === 0) {
-            console.log(`No .md files found in ${inputArg}`);
             process.exit(0);
         }
         for (const file of files) {

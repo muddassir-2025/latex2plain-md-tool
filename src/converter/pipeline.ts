@@ -32,10 +32,21 @@ import {
     stripPhantomCommands,
     stripExtensibleArrows,
     stripAccents,
+    stripFontSizeCommands,
+    stripContinuedFraction,
+    stripSubstack,
+    stripOverUnderSet,
+    stripLimitsCommands,
+    stripMathAtoms,
+    stripSmashAndClaps,
+    stripRaiseAndScale,
+    stripSideSet,
+    stripPreScript,
 } from "./stripping.js";
 import { stripEnvironments, stripHlines } from "./environments.js";
 import { ConvertOptions } from "../types/mapping.js";
 import { setConverter } from "./convert-inner.js";
+import { markUnrecognized } from "./unrecognized.js";
 
 /**
  * Full conversion pipeline.
@@ -65,8 +76,9 @@ import { setConverter } from "./convert-inner.js";
  * 22. Convert roots
  * 23. Add function parenthesization (sin x → sin(x))
  * 24. Cleanup whitespace
- * 25. Restore code blocks
- * 26. Restore URLs
+ * 25. Mark unrecognized LaTeX commands with error indicators
+ * 26. Restore code blocks
+ * 27. Restore URLs
  */
 export function runPipeline(text: string, opts: ConvertOptions = {}): string {
     // Inject self-reference for recursive inner conversion
@@ -123,6 +135,16 @@ export function runPipeline(text: string, opts: ConvertOptions = {}): string {
         result = stripOverUnderBraces(result);
         result = stripBoxes(result);
         result = stripExtensibleArrows(result);
+        result = stripFontSizeCommands(result);
+        result = stripContinuedFraction(result);
+        result = stripSubstack(result);
+        result = stripOverUnderSet(result);
+        result = stripLimitsCommands(result);
+        result = stripMathAtoms(result);
+        result = stripSmashAndClaps(result);
+        result = stripRaiseAndScale(result);
+        result = stripSideSet(result);
+        result = stripPreScript(result);
 
         // Step 14 — strip phantom commands
         result = stripPhantomCommands(result);
@@ -168,7 +190,8 @@ export function runPipeline(text: string, opts: ConvertOptions = {}): string {
         result = convertRoots(result);
     }
 
-    // Step 23 — function parenthesization (sin x → sin(x))
+    // Step 20.5 — function parenthesization (sin x → sin(x))
+    // Runs BEFORE fractions so formatFracPart sees sin(x) not (sin x)
     if (!opts.noMappings) {
         result = convertFunctions(result);
     }
@@ -176,10 +199,13 @@ export function runPipeline(text: string, opts: ConvertOptions = {}): string {
     // Step 24 — cleanup
     result = cleanup(result);
 
-    // Step 25 — restore code blocks
+    // Step 25 — mark unrecognized LaTeX with error indicators
+    result = markUnrecognized(result);
+
+    // Step 26 — restore code blocks
     result = restoreCodeBlocks(result, cbBlocks);
 
-    // Step 26 — restore URLs
+    // Step 27 — restore URLs
     result = restoreUrls(result, urlBlocks);
 
     return result;

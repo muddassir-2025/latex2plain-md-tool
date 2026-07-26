@@ -20,6 +20,8 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { convertToPdfBuffer } from "./pdf.js";
 import { smartFormat } from "./formatter/notes.js";
+import { aiFormat } from "./formatter/ai-format.js";
+import type { AiFormatResult } from "./formatter/ai-format.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -63,7 +65,7 @@ app.get("/health", (_req, res) => {
 
 app.post("/api/convert", async (req, res, next) => {
     try {
-        const { markdown, smartFormat: useSmartFormat } = req.body;
+        const { markdown, smartFormat: useSmartFormat, aiFormat: useAiFormat } = req.body;
 
         if (!markdown || typeof markdown !== "string" || markdown.trim().length === 0) {
             res.status(400).json({ error: "No markdown content provided." });
@@ -76,7 +78,24 @@ app.post("/api/convert", async (req, res, next) => {
         }
 
         let content = markdown;
-        if (useSmartFormat) {
+
+        if (useAiFormat) {
+            // Try AI formatting first
+            const result: AiFormatResult = await aiFormat(content);
+            if (result.success) {
+                content = result.formatted;
+                console.log("✓ AI formatting applied successfully");
+            } else {
+                // Fallback to smartFormat if AI fails
+                console.warn("AI formatting failed:", result.error);
+                content = smartFormat(content);
+
+                // Signal rate limiting to the client via custom header
+                if (result.error?.includes("rate limit")) {
+                    res.set("X-Ai-Format-Status", "rate-limited");
+                }
+            }
+        } else if (useSmartFormat) {
             content = smartFormat(content);
         }
 
@@ -114,7 +133,25 @@ app.post("/api/convert-file", async (req, res, next) => {
         }
 
         const useSmartFormat = req.body.smartFormat === "true" || req.body.smartFormat === true;
-        if (useSmartFormat) {
+        const useAiFormat = req.body.aiFormat === "true" || req.body.aiFormat === true;
+
+        if (useAiFormat) {
+            // Try AI formatting first
+            const result: AiFormatResult = await aiFormat(content);
+            if (result.success) {
+                content = result.formatted;
+                console.log("✓ AI formatting applied successfully");
+            } else {
+                // Fallback to smartFormat if AI fails
+                console.warn("AI formatting failed:", result.error);
+                content = smartFormat(content);
+
+                // Signal rate limiting to the client via custom header
+                if (result.error?.includes("rate limit")) {
+                    res.set("X-Ai-Format-Status", "rate-limited");
+                }
+            }
+        } else if (useSmartFormat) {
             content = smartFormat(content);
         }
 
@@ -240,6 +277,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
     console.log(`latex2plain server running on http://localhost:${PORT}`);
+    console.log(`GROQ_API_KEY ${process.env.GROQ_API_KEY ? "✓ is set" : "✘ is NOT set — AI Format will fall back to Smart Format"}`);
     if (clientDist) {
         console.log(`Serving frontend from: ${clientDist}`);
     } else if (isProduction) {

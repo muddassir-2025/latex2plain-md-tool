@@ -1,729 +1,780 @@
 /**
- * Smart Notes Formatter
+ * Smart Format v2 — deterministic, dependency-free note-to-Markdown formatter.
  *
- * Takes raw unstructured text (study notes, research papers, ChatGPT output, etc.)
- * and produces properly structured Markdown by detecting:
- *
- *   - Code blocks (indented code, function definitions)
- *   - Headings (chapter/section/lecture, numbered, title-case)
- *   - Math expressions (LaTeX patterns)
- *   - Special elements (definitions, notes, examples, formulas)
- *   - Lists (explicit and implicit)
- *   - Blockquotes (callout patterns)
- *   - References (sections and list items)
- *   - URLs and links
- *   - Horizontal rules
- *
- * Multi-pass architecture:
- *   Pass 1 — Block detection (code, horizontal rules)
- *   Pass 2 — Special element detection (def, note, example, formula)
- *   Pass 3 — Math detection and wrapping
- *   Pass 4 — Heading detection
- *   Pass 5 — List and reference detection
- *   Pass 6 — URL/link detection
- *   Pass 7 — Cleanup and formatting
+ * No AI / network calls, same as v1. The structural difference from v1 is that
+ * several passes now look at more than one line before deciding anything —
+ * a document-level pre-scan for dialogue, a run of consecutive lines for
+ * derivations/tables, a look at the *next* line before promoting a heading —
+ * instead of judging each line in total isolation. That's what fixes most of
+ * the false positives/negatives called out against v1 (see README.md).
  */
 
-// ─── Interface ────────────────────────────────────────────────────────────────
+// ── Types ───────────────────────────────────────────────────────────────
 
-export interface FormatOptions {
-    /** Language hint for detected code blocks (default: "text") */
-    codeLanguage?: string;
+export interface SmartFormatOptions {
+  /** Prepend a Table of Contents built from detected headings. Off by default: it's the one feature that adds content not present in the source. */
+  generateTOC?: boolean;
+  /** Mark genuinely ambiguous heading/table calls with an inline `<!-- verify: ... -->` comment instead of silently guessing. Off by default. */
+  flagUncertain?: boolean;
+  /** Rejoin words split across a line break by a trailing hyphen (common in OCR/scanned text). Off by default — risky against real hyphenated compounds. */
+  fixOcrArtifacts?: boolean;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+interface Doc {
+  lines: string[];
+}
 
-/** LaTeX math patterns that indicate a line contains math expressions. */
-const MATH_PATTERNS = [
-    // Trig, log, box, and arrows
-    /\\sin\b/,
-    /\\cos\b/,
-    /\\tan\b/,
-    /\\cot\b/,
-    /\\sec\b/,
-    /\\csc\b/,
-    /\\sinh\b/,
-    /\\cosh\b/,
-    /\\tanh\b/,
-    /\\log\b/,
-    /\\ln\b/,
-    /\\lg\b/,
-    /\\boxed/,
-    /\\circ\b/,
-    /\\rightarrow\b/,
-    /\\leftarrow\b/,
-    /\\Rightarrow\b/,
-    /\\Leftarrow\b/,
-    // More Greek letters
-    /\\omega\b/,
-    /\\phi\b/,
-    /\\Phi\b/,
-    /\\sigma\b/,
-    /\\Sigma\b/,
-    /\\lambda\b/,
-    /\\mu\b/,
-    /\\rho\b/,
-    /\\tau\b/,
-    /\\epsilon\b/,
-    /\\varepsilon\b/,
-    // Original patterns
-    /\\frac\{/,
-    /\\int(?:_|\^|\{)/,
-    /\\sum(?:_|\^|\{)/,
-    /\\lim(it)?(?:_|\{|:)/,
-    /\\sqrt(\[|{)/,
-    /\\alpha|\\beta|\\gamma|\\theta|\\pi|\\infty|\\delta/,
-    /\\partial|\\nabla/,
-    /\\to\b/,
-    /\\times|\\cdot/,
-    /\\binom/,
-    /\\text\{/,
-    /\\qquad|\\quad/,
-    /\\\(/,
-    /\\\)/,
-    /\\\[/,
-    /\\\]/,
-    // Common patterns in study notes (without backslash)
-    /int_[a-z]/i,
-    /sum_[a-z]/i,
-    /lim_/i,
-    /[a-z]_[a-z0-9]\b/,
-    /[a-zA-Z]\^[0-9]/,  // require letter before caret: x^3, not just ^3
-    /[a-zA-Z]\^\{/,   // require letter before ^{: x^{n}
+export interface HeadingInfo {
+  level: number;
+  text: string;
+  lineIndex: number;
+}
+
+const DEFAULT_OPTIONS: Required<SmartFormatOptions> = {
+  generateTOC: false,
+  flagUncertain: false,
+  fixOcrArtifacts: false,
+};
+
+// ── Entry point ─────────────────────────────────────────────────────────
+
+export function smartFormat(rawText: string, options: SmartFormatOptions = {}): string {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+  let doc: Doc = { lines: rawText.replace(/\r\n/g, '\n').split('\n') };
+
+  doc = pass1_blocks(doc);
+  doc = pass2_callouts(doc);
+  doc = pass3_math(doc);
+  const headingResult = pass4_headings(doc, opts.flagUncertain);
+  doc = headingResult.doc;
+  const headings = headingResult.headings;
+  doc = pass5_lists(doc);
+  doc = pass6_tables(doc, opts.flagUncertain);
+  doc = pass7_tasksAndDialogue(doc);
+  doc = pass8_links(doc);
+  doc = pass9_cleanup(doc, opts.fixOcrArtifacts);
+
+  let output = doc.lines.join('\n');
+  if (opts.generateTOC && headings.length > 0) {
+    output = buildTOC(headings) + '\n\n' + output;
+  }
+  return output;
+}
+
+// ── Shared helpers ──────────────────────────────────────────────────────
+
+function isBlank(line: string): boolean {
+  return /^\s*$/.test(line);
+}
+
+function isListMarker(line: string): boolean {
+  return /^\s*([-*+]|\d+[.)])\s+/.test(line);
+}
+
+/** True for every line sitting inside a fenced ``` code block — every later pass must leave these untouched. Recomputed fresh at the start of each pass since earlier passes may have inserted/removed lines. */
+function computeProtectedMask(lines: string[]): boolean[] {
+  const mask = new Array(lines.length).fill(false);
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*```/.test(lines[i])) {
+      mask[i] = true;
+      inFence = !inFence;
+      continue;
+    }
+    mask[i] = inFence;
+  }
+  return mask;
+}
+
+function looksLikeHeadingMarker(line: string): boolean {
+  return (
+    /^\s*(chapter|lecture|section|unit|part|capítulo|capitulo|kapitel|chapitre|capitolo|seção|secao|lección|leccion|leçon|lecon)\s+\d/i.test(
+      line
+    ) || /^#{1,6}\s/.test(line)
+  );
+}
+
+// ── Pass 1 — Blocks (code) ──────────────────────────────────────────────
+
+const LANGUAGE_PATTERNS: Record<string, RegExp[]> = {
+  python: [/^\s*(def |class |import |from \S+ import|elif |except\b|@\w+|self\.)/],
+  typescript: [/^\s*(interface |type \w+\s*=|export (default )?(function|const|class|interface|type))/, /:\s*\w+(\[\])?\s*[=;,)]/],
+  javascript: [/^\s*(function\s|const\s|let\s|var\s|=>|console\.log|module\.exports|require\()/],
+  java: [/^\s*(public |private |protected )?(static )?(class |void |interface )/, /System\.out\./],
+  cpp: [/#include\s*<.*>/, /std::/, /cout\s*<</, /cin\s*>>/, /^\s*int main\s*\(/],
+  c: [/#include\s*"/, /\bprintf\(/, /\bscanf\(/, /\bmalloc\(/],
+  go: [/^\s*(func |package |import \()/, /fmt\./],
+  rust: [/^\s*(fn |let mut |use std|impl )/, /println!/],
+  ruby: [/^\s*(def |end\s*$|require |puts )/],
+  sql: [/^\s*(SELECT|INSERT INTO|UPDATE|DELETE FROM|CREATE TABLE)\b/i],
+  bash: [/^\s*#!\/bin\/(ba)?sh/, /^\s*(echo |sudo |cd |grep |npm |pip |git )/],
+  html: [/<\/?[a-zA-Z][^>]*>/],
+  css: [/^\s*[.#]?[\w-]+\s*\{/, /:\s*[\w#-]+;\s*$/],
+  json: [/^\s*[{[]/, /^\s*"[^"]+"\s*:/],
+};
+
+function looksLikeCodeLine(line: string): boolean {
+  if (isBlank(line)) return false;
+  for (const patterns of Object.values(LANGUAGE_PATTERNS)) {
+    if (patterns.some((p) => p.test(line))) return true;
+  }
+  if (/[;{]\s*$/.test(line)) return true;
+  return false;
+}
+
+function isIndentedCodeCandidate(line: string): boolean {
+  return /^(\t| {4,})\S/.test(line);
+}
+
+function guessLanguage(blockLines: string[]): string {
+  const scores: Record<string, number> = {};
+  for (const lang of Object.keys(LANGUAGE_PATTERNS)) scores[lang] = 0;
+  for (const line of blockLines) {
+    for (const [lang, patterns] of Object.entries(LANGUAGE_PATTERNS)) {
+      for (const p of patterns) if (p.test(line)) scores[lang]++;
+    }
+  }
+  let best = 'text';
+  let bestScore = 0;
+  for (const [lang, score] of Object.entries(scores)) {
+    if (score > bestScore) {
+      best = lang;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+const INLINE_CODE_PATTERNS: RegExp[] = [
+  /(?<!`)\b[a-zA-Z_][\w.]*\([^()\n]{0,60}\)(?!`)/g, // function/method calls
+  /(?<!`)\b(?:\.{1,2}\/)?[\w-]+(?:\/[\w.-]+)+(?!`)/g, // file paths
+  /(?<!`)\b[\w-]+\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|cpp|cc|c|h|hpp|json|md|ya?ml|sql|sh|css|html|txt)\b(?!`)/g, // filenames
+  /(?<!`)--[a-zA-Z][\w-]*(?!`)/g, // long flags
 ];
 
-/** Check if a line looks like it contains LaTeX math. */
-function looksLikeMath(line: string): boolean {
+function wrapInlineCode(line: string): string {
+  if (/^\s*```/.test(line) || /^\s*>/.test(line)) return line;
+  let result = line;
+  for (const pattern of INLINE_CODE_PATTERNS) {
+    result = result.replace(pattern, (m) => '`' + m + '`');
+  }
+  return result;
+}
+
+function pass1_blocks(doc: Doc): Doc {
+  const lines = doc.lines;
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      out.push(line);
+      i++;
+      continue;
+    }
+
+    if (!/^\s*```/.test(line) && looksLikeCodeLine(line)) {
+      const block: string[] = [];
+      let j = i;
+      while (j < lines.length && !isBlank(lines[j]) && !looksLikeHeadingMarker(lines[j])) {
+        block.push(lines[j]);
+        j++;
+      }
+      if (block.length >= 2) {
+        const lang = guessLanguage(block);
+        out.push('```' + lang, ...block, '```');
+        i = j;
+        continue;
+      }
+    }
+
+    if (isIndentedCodeCandidate(line) && !isListMarker(line)) {
+      const block: string[] = [];
+      let j = i;
+      while (j < lines.length && isIndentedCodeCandidate(lines[j]) && !isListMarker(lines[j])) {
+        block.push(lines[j].replace(/^\t| {4}/, ''));
+        j++;
+      }
+      if (block.length >= 2) {
+        const lang = guessLanguage(block);
+        out.push('```' + lang, ...block, '```');
+        i = j;
+        continue;
+      }
+    }
+
+    out.push(wrapInlineCode(line));
+    i++;
+  }
+  return { lines: out };
+}
+
+// ── Pass 2 — Callouts ───────────────────────────────────────────────────
+
+type CalloutStyle = 'blockquote' | 'bold' | 'blockquote-title';
+
+const EXPLICIT_CALLOUT_LABELS: { keyword: string; display: string; style: CalloutStyle }[] = [
+  { keyword: 'note', display: 'Note', style: 'blockquote' },
+  { keyword: 'important', display: 'Important', style: 'blockquote' },
+  { keyword: 'warning', display: 'Warning', style: 'blockquote' },
+  { keyword: 'caution', display: 'Caution', style: 'blockquote' },
+  { keyword: 'hint', display: 'Hint', style: 'blockquote' },
+  { keyword: 'tip', display: 'Tip', style: 'blockquote' },
+  { keyword: 'definition', display: 'Definition', style: 'bold' },
+  { keyword: 'def', display: 'Definition', style: 'bold' },
+  { keyword: 'example', display: 'Example', style: 'bold' },
+  { keyword: 'summary', display: 'Summary', style: 'blockquote' },
+  { keyword: 'key', display: 'Key', style: 'blockquote' },
+  { keyword: 'remember', display: 'Remember', style: 'blockquote' },
+  { keyword: 'key concepts', display: 'Key Concepts', style: 'blockquote-title' },
+];
+
+const IMPLICIT_NOTE_PATTERNS: RegExp[] = [
+  /^\s*keep in mind(?: that)?[,:]?\s+/i,
+  /^\s*remember(?: that)?[,:]?\s+/i,
+  /^\s*don'?t forget(?: that)?[,:]?\s+/i,
+  /^\s*be careful(?: to| that)?[,:]?\s+/i,
+  /^\s*watch out(?: for)?[,:]?\s+/i,
+];
+const IMPLICIT_IMPORTANT_PATTERNS: RegExp[] = [/^\s*the key (?:insight|takeaway|point|idea) is[,:]?\s+/i];
+
+/** Pattern for `formula:` / `equation:` → display math $$...$$ */
+const FORMULA_PATTERN = /^(formula|equation)[:\s]+(.+)/i;
+
+function pass2_callouts(doc: Doc): Doc {
+  const protectedMask = computeProtectedMask(doc.lines);
+  const out: string[] = [];
+
+  for (let i = 0; i < doc.lines.length; i++) {
+    const line = doc.lines[i];
+    if (protectedMask[i]) {
+      out.push(line);
+      continue;
+    }
+
+    const indentMatch = line.match(/^(\s*)/);
+    const indent = indentMatch ? indentMatch[1] : '';
+    const content = line.slice(indent.length);
+
+    // Check formula/equation first (these produce display math, not callouts)
+    const formMatch = content.match(FORMULA_PATTERN);
+    if (formMatch) {
+      out.push(`${indent}$$${formMatch[2].trim()}$$`);
+      continue;
+    }
+
+    let handled = false;
+    for (const { keyword, display, style } of EXPLICIT_CALLOUT_LABELS) {
+      const re = new RegExp(`^${keyword}:\\s*`, 'i');
+      if (re.test(content)) {
+        const rest = content.replace(re, '');
+        if (style === 'blockquote') out.push(`${indent}> **${display}:** ${rest}`);
+        else if (style === 'bold') out.push(`${indent}**${display}:** ${rest}`);
+        else out.push(`${indent}> **${display}**${rest ? ' ' + rest : ''}`);
+        handled = true;
+        break;
+      }
+    }
+    if (handled) continue;
+
+    let matchedImplicit = false;
+    for (const re of IMPLICIT_NOTE_PATTERNS) {
+      if (re.test(content)) {
+        out.push(`${indent}> **Note:** ${content}`);
+        matchedImplicit = true;
+        break;
+      }
+    }
+    if (!matchedImplicit) {
+      for (const re of IMPLICIT_IMPORTANT_PATTERNS) {
+        if (re.test(content)) {
+          out.push(`${indent}> **Important:** ${content}`);
+          matchedImplicit = true;
+          break;
+        }
+      }
+    }
+    if (matchedImplicit) continue;
+
+    out.push(line);
+  }
+  return { lines: out };
+}
+
+// ── Pass 3 — Math ───────────────────────────────────────────────────────
+
+const MATH_COMMAND_PATTERN =
+  /\\(frac|int|sum|lim|sqrt|sin|cos|tan|alpha|beta|gamma|theta|pi|infty|partial|nabla|cdot|times|leq|geq|neq|approx|rightarrow|Rightarrow|forall|exists|subset|cup|cap|binom|log|ln|exp)\b/;
+const SUBSUP_PATTERN = /[A-Za-z0-9)\]]\^\{?-?\w+\}?|[A-Za-z0-9)\]]_\{?-?\w+\}?/;
+const EQUATION_PATTERN = /[A-Za-z0-9)\]]\s*=\s*[^=]/;
+
+function looksLikeMathLine(line: string): boolean {
+  if (isBlank(line)) return false;
+  if (/^\s*>/.test(line)) return false;
+  if (/^#{1,6}\s/.test(line)) return false;
+  if (/\$.*\$/.test(line)) return false;
+  return (
+    MATH_COMMAND_PATTERN.test(line) ||
+    SUBSUP_PATTERN.test(line) ||
+    (EQUATION_PATTERN.test(line) && /[+\-*/^_\\]/.test(line))
+  );
+}
+
+function pass3_math(doc: Doc): Doc {
+  const protectedMask = computeProtectedMask(doc.lines);
+  const lines = doc.lines;
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (protectedMask[i]) {
+      out.push(lines[i]);
+      i++;
+      continue;
+    }
+    const line = lines[i];
+
+    const beginMatch = line.match(/\\begin\{(\w+\*?)\}/);
+    if (beginMatch) {
+      const env = beginMatch[1];
+      const block: string[] = [line];
+      let j = i + 1;
+      const endRe = new RegExp(`\\\\end\\{${env}\\}`);
+      while (j < lines.length && !endRe.test(lines[j])) {
+        block.push(lines[j]);
+        j++;
+      }
+      if (j < lines.length) {
+        block.push(lines[j]);
+        j++;
+      }
+      const alreadyWrapped = /^\s*\$\$/.test(block[0]) || /\$\$\s*$/.test(block[block.length - 1]);
+      if (alreadyWrapped) out.push(...block);
+      else out.push('$$', ...block, '$$');
+      i = j;
+      continue;
+    }
+
+    if (looksLikeMathLine(line)) {
+      const block: string[] = [line];
+      let j = i + 1;
+      while (j < lines.length && !isBlank(lines[j]) && !protectedMask[j] && looksLikeMathLine(lines[j])) {
+        block.push(lines[j]);
+        j++;
+      }
+      if (block.length > 1) {
+        out.push('$$', '\\begin{aligned}');
+        for (let k = 0; k < block.length; k++) {
+          const suffix = k < block.length - 1 ? ' \\\\' : '';
+          out.push(block[k].trim() + suffix);
+        }
+        out.push('\\end{aligned}', '$$');
+      } else {
+        const single = block[0].trim();
+        if (single.length > 20 && /=/.test(single)) out.push(`$$${single}$$`);
+        else out.push(`$${single}$`);
+      }
+      i = j;
+      continue;
+    }
+
+    out.push(line);
+    i++;
+  }
+  return { lines: out };
+}
+
+// ── Pass 4 — Headings ───────────────────────────────────────────────────
+
+const STOPWORDS = new Set(['a', 'an', 'the', 'of', 'in', 'on', 'and', 'or', 'but', 'to', 'for', 'with', 'at', 'by', 'from', 'is', 'as', 'vs', 'via']);
+
+const CHAPTER_MARKER =
+  /^\s*(chapter|lecture|section|unit|part|capítulo|capitulo|kapitel|chapitre|capitolo|seção|secao|lección|leccion|leçon|lecon)\s+(\d+(?:\.\d+)*)\s*[:.\-]?\s*(.*)$/i;
+const ACADEMIC_HEADINGS = new Set(['abstract', 'introduction', 'conclusion', 'references', 'methodology', 'overview', 'prerequisites', 'summary', 'background', 'discussion', 'results', 'appendix']);
+const NUMBERED_PATTERN = /^\s*(\d+(?:\.\d+)*)\.?\s+(.+)$/;
+
+function isTrueTitleCase(line: string): boolean {
+  const trimmed = line.trim();
+  const words = trimmed.split(/\s+/);
+  if (words.length < 2 || words.length > 7) return false;
+  if (trimmed.length > 55) return false;
+  if (/[.,;:]$/.test(trimmed)) return false;
+  let significant = 0;
+  let capitalized = 0;
+  for (const w of words) {
+    const bare = w.replace(/[^\w'-]/g, '');
+    if (!bare) continue;
+    if (STOPWORDS.has(bare.toLowerCase())) continue;
+    significant++;
+    if (/^[A-Z]/.test(bare)) capitalized++;
+  }
+  return significant > 0 && capitalized === significant;
+}
+
+function pass4_headings(doc: Doc, flagUncertain: boolean): { doc: Doc; headings: HeadingInfo[] } {
+  const protectedMask = computeProtectedMask(doc.lines);
+  const lines = doc.lines;
+  const out: string[] = [];
+  const headings: HeadingInfo[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    if (protectedMask[i]) {
+      out.push(lines[i]);
+      continue;
+    }
+    const line = lines[i];
     const trimmed = line.trim();
-    if (!trimmed) return false;
+    const prevBlank = i === 0 || isBlank(lines[i - 1]);
 
-    // Must contain at least one math pattern
-    const hasPattern = MATH_PATTERNS.some((p) => p.test(trimmed));
-    if (hasPattern) return true;
+    const chMatch = trimmed.match(CHAPTER_MARKER);
+    if (chMatch) {
+      const depth = chMatch[2].split('.').length;
+      const level = Math.min(depth, 6);
+      const title = `${chMatch[1]} ${chMatch[2]}${chMatch[3] ? ': ' + chMatch[3] : ''}`;
+      out.push(`${'#'.repeat(level)} ${title}`);
+      headings.push({ level, text: title, lineIndex: out.length - 1 });
+      continue;
+    }
 
-    // Common math variable patterns: f(x)=..., etc.
-    // but avoid matching URLs, code, or regular sentences
+    const numMatch = trimmed.match(NUMBERED_PATTERN);
+    if (numMatch && prevBlank) {
+      const nextLineNum = i + 1 < lines.length ? lines[i + 1].trim() : '';
+      if (!NUMBERED_PATTERN.test(nextLineNum)) {
+        const depth = numMatch[1].split('.').length;
+        const level = Math.min(1 + depth, 6);
+        out.push(`${'#'.repeat(level)} ${numMatch[2]}`);
+        headings.push({ level, text: numMatch[2], lineIndex: out.length - 1 });
+        continue;
+      }
+    }
+
+    if (prevBlank && ACADEMIC_HEADINGS.has(trimmed.toLowerCase().replace(/:$/, ''))) {
+      const title = trimmed.replace(/:$/, '');
+      out.push(`## ${title}`);
+      headings.push({ level: 2, text: title, lineIndex: out.length - 1 });
+      continue;
+    }
+
+    if (prevBlank && isTrueTitleCase(trimmed)) {
+      out.push(`## ${trimmed}`);
+      headings.push({ level: 2, text: trimmed, lineIndex: out.length - 1 });
+      continue;
+    }
+
+    if (prevBlank && /^[A-Z][A-Za-z]{2,}$/.test(trimmed) && !STOPWORDS.has(trimmed.toLowerCase())) {
+      out.push(`## ${trimmed}`);
+      if (flagUncertain) out.push('<!-- verify: single-word heading, low confidence -->');
+      headings.push({ level: 2, text: trimmed, lineIndex: out.length - (flagUncertain ? 2 : 1) });
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  let lastLevel: number | null = null;
+  for (const h of headings) {
+    if (lastLevel !== null && h.level > lastLevel + 1) h.level = lastLevel + 1;
+    lastLevel = h.level;
+    out[h.lineIndex] = `${'#'.repeat(h.level)} ${h.text}`;
+  }
+
+  return { doc: { lines: out }, headings };
+}
+
+// ── Pass 5 — Lists ──────────────────────────────────────────────────────
+
+const COMMON_VERBS = new Set([
+  'is', 'are', 'was', 'were', 'has', 'have', 'had', 'does', 'do', 'did', 'will', 'would', 'can', 'could', 'should', 'must',
+  'said', 'means', 'represents', 'shows', 'includes', 'contains', 'provides', 'requires', 'allows', 'helps',
+]);
+
+function isLikelyTermDescription(term: string): boolean {
+  const words = term.trim().split(/\s+/);
+  if (words.length > 4) return false;
+  if (term.trim().length > 30) return false;
+  return !words.some((w) => COMMON_VERBS.has(w.toLowerCase()));
+}
+
+const TRANSITION_WORDS = /^(first|second|third|fourth|next|then|after that|finally|lastly)[,:]\s+/i;
+
+function promoteImplicitNesting(lines: string[], protectedMask: boolean[]): string[] {
+  const out: string[] = [];
+  let lastListIndent: number | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (protectedMask[i]) {
+      out.push(line);
+      continue;
+    }
+    const listMatch = line.match(/^(\s*)([-*+]|\d+[.)])\s+/);
+    if (listMatch) {
+      lastListIndent = listMatch[1].length;
+      out.push(line);
+      continue;
+    }
+    if (isBlank(line)) {
+      lastListIndent = null;
+      out.push(line);
+      continue;
+    }
+    if (lastListIndent !== null) {
+      const indentMatch = line.match(/^(\s*)\S/);
+      const indent = indentMatch ? indentMatch[1].length : 0;
+      if (indent > lastListIndent && !/^\s*(```|>|#{1,6}\s)/.test(line)) {
+        out.push(' '.repeat(indent) + '- ' + line.trim());
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+function convertTransitionParagraphs(lines: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (TRANSITION_WORDS.test(lines[i])) {
+      const block: string[] = [];
+      let j = i;
+      while (j < lines.length && !isBlank(lines[j]) && TRANSITION_WORDS.test(lines[j])) {
+        block.push(lines[j].replace(TRANSITION_WORDS, ''));
+        j++;
+      }
+      if (block.length >= 2) {
+        block.forEach((item, idx) => out.push(`${idx + 1}. ${item}`));
+        i = j;
+        continue;
+      }
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return out;
+}
+
+function pass5_lists(doc: Doc): Doc {
+  const protectedMask = computeProtectedMask(doc.lines);
+  const nested = promoteImplicitNesting(doc.lines, protectedMask);
+
+  const out: string[] = [];
+  for (let i = 0; i < nested.length; i++) {
+    const line = nested[i];
+    if (protectedMask[i] || isBlank(line) || /^\s*([-*+]|\d+[.)])\s+/.test(line) || /^\s*>/.test(line) || /^#{1,6}\s/.test(line)) {
+      out.push(line);
+      continue;
+    }
+    const dashMatch = line.match(/^(\s*)([^\n—-]{1,40}?)\s+(?:—|-)\s+(.+)$/);
+    if (dashMatch && isLikelyTermDescription(dashMatch[2])) {
+      out.push(`${dashMatch[1]}- **${dashMatch[2].trim()}** — ${dashMatch[3]}`);
+      continue;
+    }
+    out.push(line);
+  }
+
+  return { lines: convertTransitionParagraphs(out) };
+}
+
+// ── Pass 6 — Tables (new) ───────────────────────────────────────────────
+
+const TABLE_HEADER_HINTS = new Set(['name', 'role', 'status', 'date', 'id', 'type', 'owner', 'priority', 'value', 'price', 'count', 'description', 'category']);
+
+function splitColumns(line: string): string[] | null {
+  if (line.includes('|')) {
+    const cols = line
+      .split('|')
+      .map((c) => c.trim())
+      .filter((c, idx, arr) => !(c === '' && (idx === 0 || idx === arr.length - 1)));
+    return cols.length >= 2 ? cols : null;
+  }
+  const bySpaces = line
+    .split(/ {2,}|\t+/)
+    .map((c) => c.trim())
+    .filter((c) => c !== '');
+  return bySpaces.length >= 2 ? bySpaces : null;
+}
+
+function pass6_tables(doc: Doc, flagUncertain: boolean): Doc {
+  const protectedMask = computeProtectedMask(doc.lines);
+  const lines = doc.lines;
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
     if (
-        trimmed.includes("=") &&
-        /[a-z]\)\s*=\s*/.test(trimmed) &&
-        !trimmed.startsWith("http") &&
-        !trimmed.startsWith("#") &&
-        trimmed.length < 80
+      protectedMask[i] ||
+      isBlank(lines[i]) ||
+      /^\s*(```|>|#{1,6}\s|[-*+]\s|\d+[.)]\s)/.test(lines[i]) ||
+      /^\s*\|?\s*-{3,}/.test(lines[i])
     ) {
-        return true;
+      out.push(lines[i]);
+      i++;
+      continue;
     }
-
-    return false;
-}
-
-/** Check if a line looks like a heading candidate. */
-function looksLikeHeading(line: string): boolean {
-    const trimmed = line.trim();
-    if (!trimmed) return false;
-
-    // Already a Markdown heading
-    if (trimmed.startsWith("#")) return true;
-
-    // Chapter/Lecture/Section/Part patterns
-    if (/^(chapter|lecture|section|part|module|unit|lesson)\s+\d+/i.test(trimmed)) return true;
-
-    // Numbered headings: 1. Title, 1.1 Title
-    if (/^\d+\.\d+\s/.test(trimmed)) return true;
-    if (/^\d+\.\s+[A-Z]/.test(trimmed)) return true;
-
-    // Abstract, Introduction, Conclusion, etc.
-    if (
-        /^(abstract|introduction|background|related work|methodology|results?|discussion|conclusion|references?|appendix|acknowledgments)/i.test(
-            trimmed,
-        )
-    )
-        return true;
-
-    // Exclude lines that are clearly sentences (end with period/question/exclamation)
-    if (/[.?!]$/.test(trimmed)) return false;
-
-    // Exclude lines with math-like patterns (those should be handled by math pass)
-    if (/[_^]/.test(trimmed) || /\\/.test(trimmed)) return false;
-
-    const words = trimmed.split(/\s+/);
-    const numWords = words.length;
-
-    // Single-word heading: capitalized word, > 2 chars, not a common stop word
-    if (numWords === 1) {
-        const word = words[0];
-        // Must start uppercase, be at least 3 chars, and not be a common word
-        if (
-            /^[A-Z]/.test(word) &&
-            word.length >= 3 &&
-            !/^(The|And|For|But|Not|This|That|With|From|They|What|When|Where|Why|How|Which|While|Will|Would|Could|Should|May|Might|Can|Has|Had|Have|Are|Was|Were|Been|Does|Did|Just|Very|Also|Too|One|Two|Three)$/i.test(
-                word.replace(/[:,;:]$/, ""),
-            )
-        ) {
-            return true;
-        }
-    }
-
-    // Relaxed title-case (2-7 words): first word uppercase, at least 50% uppercase starts
-    if (numWords >= 2 && numWords <= 7 && trimmed.length <= 55) {
-        // First word must start with uppercase
-        if (/^[A-Z]/.test(words[0])) {
-            // Count uppercase-starting words
-            const upperCount = words.filter((w) => /^[A-Z]/.test(w)).length;
-            // At least 50% of words start uppercase (excluding the first word which is guaranteed)
-            if (upperCount >= Math.ceil(numWords / 2)) {
-                // No comma (sentence-like)
-                if (!trimmed.includes(",")) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    return false;
-}
-
-/** Check if a line looks like the start of a code block. */
-function looksLikeCode(line: string): boolean {
-    const trimmed = line.trim();
-
-    // Python function/class/import/for/while/if/with/def
-    if (
-        /^(def |class |import |from |for |while |if |elif |else:|try:|except |with |async |await )/.test(
-            trimmed,
-        )
-    )
-        return true;
-
-    // C/Java/JS/C++ patterns
-    if (
-        /^(int |float |double |char |void |bool |string |const |static |public |private |protected |function |var |let |const |include|#include|using |namespace |template )/
-            .test(trimmed)
-    )
-        return true;
-
-    // Return/print/yield statements
-    if (/^(return |print\s*\(|console\.|System\.out)/.test(trimmed)) return true;
-
-    // Lambda expressions
-    if (trimmed.includes("lambda") && trimmed.includes(":")) return true;
-
-    // Variable assignment with type hints or operators
-    if (/^\w+\s*[:=]\s*(int|float|str|bool|List|Dict|Tuple|Set|Optional)\b/.test(trimmed))
-        return true;
-
-    // Array/object literal start
-    if (/^[\[{]\s*['"]/.test(trimmed)) return true;
-
-    return false;
-}
-
-/** Detect the programming language from code content. */
-function detectLanguage(lines: string[]): string {
-    const combined = lines.join("\n");
-
-    if (/import\s+(numpy|pandas|matplotlib|tensorflow|torch|sklearn|flask|django|os|sys|re|json)/.test(combined))
-        return "python";
-    if (/def\s+\w+\s*\(/.test(combined) && /:\s*$/.test(lines[0] || "")) return "python";
-    if (/^(import |from\s+)/.test(lines[0] || "")) return "python";
-    if (/#include\s*[<"]/.test(combined)) return "cpp";
-    if (/public\s+(class|static|void|int|String)/.test(combined)) return "java";
-    if (/^(const|let|var)\s/.test(lines[0] || "")) return "javascript";
-    if (/: (string|number|boolean|void|any)\b/.test(combined) && /=>/.test(combined)) return "typescript";
-    if (/^function\s/.test(lines[0] || "")) return "javascript";
-
-    return "text";
-}
-
-// ─── Detection passes ─────────────────────────────────────────────────────────
-
-interface PassResult {
-    lines: string[];
-}
-
-/**
- * Pass 1: Block detection
- *
- * Detects and wraps:
- *   - Fenced/indented code blocks
- *   - Horizontal rules (---, ***, ___)
- */
-function pass1_blocks(input: PassResult): PassResult {
-    const inputLines = input.lines;
-    const result: string[] = [];
-    let i = 0;
-
-    while (i < inputLines.length) {
-        const line = inputLines[i];
-        const trimmed = line.trim();
-
-        if (trimmed === "") {
-            result.push("");
-            i++;
-            continue;
-        }
-
-        // Detect horizontal rules
-        if (/^-{3,}$/.test(trimmed) || /^\*{3,}$/.test(trimmed) || /^_{3,}$/.test(trimmed)) {
-            result.push(trimmed);
-            i++;
-            continue;
-        }
-
-        // Detect code blocks: look for code-like lines
-        if (looksLikeCode(trimmed)) {
-            const codeLines: string[] = [line];
-            let j = i + 1;
-
-            while (j < inputLines.length) {
-                const nextTrimmed = inputLines[j].trim();
-                // Stop at blank line followed by heading-like or special
-                if (nextTrimmed === "") {
-                    // Check what comes after the blank line
-                    const afterBlank = j + 1 < inputLines.length ? inputLines[j + 1].trim() : "";
-                    if (
-                        afterBlank &&
-                        (looksLikeHeading(afterBlank) ||
-                            /^(note|important|key|def|example|formula):/i.test(afterBlank) ||
-                            /^\d+\.\d+\s/.test(afterBlank))
-                    ) {
-                        break;
-                    }
-                    // If the next non-blank line is code-like, continue
-                    let k = j + 1;
-                    while (k < inputLines.length && inputLines[k].trim() === "") k++;
-                    if (k < inputLines.length && looksLikeCode(inputLines[k].trim())) {
-                        codeLines.push("");
-                        i = j;
-                        j = k;
-                        continue;
-                    }
-                    break;
-                }
-
-                // Stop at heading-like lines
-                if (looksLikeHeading(nextTrimmed) && codeLines.length >= 2) break;
-                // Stop at special markers
-                if (
-                    /^(note|important|key|def|example|formula|summary|conclusion|references?):/i.test(
-                        nextTrimmed,
-                    ) &&
-                    codeLines.length >= 3
-                )
-                    break;
-
-                codeLines.push(inputLines[j]);
-                j++;
-            }
-
-            if (codeLines.length >= 2) {
-                const lang = detectLanguage(codeLines);
-                result.push("```" + lang);
-                result.push(...codeLines);
-                result.push("```");
-                i = j;
-                continue;
-            }
-        }
-
-        result.push(line);
+    const cols = splitColumns(lines[i]);
+    if (cols) {
+      const block: string[][] = [cols];
+      let j = i + 1;
+      while (j < lines.length) {
+        const c = splitColumns(lines[j]);
+        if (c && c.length === cols.length) {
+          block.push(c);
+          j++;
+        } else break;
+      }
+      const colCount = cols.length;
+      const headerLooksReal = block[0].some((c) => TABLE_HEADER_HINTS.has(c.toLowerCase()));
+      const enoughRows = block.length >= 3 || (colCount >= 3 && block.length >= 2);
+      if (headerLooksReal || enoughRows) {
+        out.push('| ' + block[0].join(' | ') + ' |');
+        out.push('| ' + block[0].map(() => '---').join(' | ') + ' |');
+        for (let r = 1; r < block.length; r++) out.push('| ' + block[r].join(' | ') + ' |');
+        i = j;
+        continue;
+      } else if (flagUncertain && block.length >= 2) {
+        out.push(lines[i], '<!-- verify: possible table, low confidence -->');
         i++;
+        continue;
+      }
     }
-
-    return { lines: result };
+    out.push(lines[i]);
+    i++;
+  }
+  return { lines: out };
 }
 
-/**
- * Pass 2: Special element detection (runs BEFORE math/headings)
- *
- * Converts:
- *   "def: term is ..." → "**Definition:** term is ..."
- *   "note: remember to ..." → "> **Note:** remember to ..."
- *   "important: the key is ..." → "> **Important:** the key is ..."
- *   "example: compute ..." → "**Example:** compute ..."
- *   "formula: E = mc^2" → "$$E = mc^2$$"
- *   "key concepts:" → "> **Key Concepts**"
- *   "summary: ..." → "> **Summary:** ..."
- */
-function pass2_special(input: PassResult): PassResult {
-    const lines = input.lines;
-    const result: string[] = [];
-    let inCode = false;
+// ── Pass 7 — Tasks & dialogue (new) ─────────────────────────────────────
 
-    for (const line of lines) {
-        const trimmed = line.trim();
+const TASK_PATTERN = /^(\s*(?:[-*+]\s*)?)(TODO|action item|follow[- ]?up)s?\s*:\s*/i;
+const QA_PATTERN = /^\s*(Q\d*|A\d*)\s*:\s*(.+)$/;
+const RESERVED_LABELS = new Set(['note', 'important', 'warning', 'caution', 'hint', 'tip', 'definition', 'example', 'key concepts', 'todo', 'action item', 'follow up', 'followup']);
 
-        if (trimmed.startsWith("```")) {
-            inCode = !inCode;
-            result.push(line);
-            continue;
-        }
+function pass7_tasksAndDialogue(doc: Doc): Doc {
+  const protectedMask = computeProtectedMask(doc.lines);
+  const lines = doc.lines;
 
-        if (inCode || trimmed.startsWith("#") || trimmed.startsWith("$$") || trimmed.startsWith("```")) {
-            result.push(line);
-            continue;
-        }
+  let speakerLineCount = 0;
+  for (const line of lines) {
+    const m = line.match(/^\s*([A-Z][\w'’.-]*(?:\s[A-Z][\w'’.-]*){0,2}):\s+\S/);
+    if (m && !RESERVED_LABELS.has(m[1].toLowerCase())) speakerLineCount++;
+  }
+  const looksLikeTranscript = speakerLineCount >= 3;
 
-        // Standalone multi-word callouts (MUST run BEFORE single-word to avoid partial matches)
-        // e.g. "key concepts:" should not be matched as "key" + " concepts:"
-        const headingCalloutMatch = trimmed.match(
-            /^(key concepts|main ideas|important notes|learning objectives|key takeaways|key points)[:\s]*$/i,
-        );
-        if (headingCalloutMatch) {
-            const label = headingCalloutMatch[1]
-                .split(/\s+/)
-                .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                .join(" ");
-            result.push("> **" + label + "**");
-            continue;
-        }
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (protectedMask[i]) {
+      out.push(lines[i]);
+      continue;
+    }
+    const line = lines[i];
 
-        // Definition
-        const defMatch = trimmed.match(/^(def(?:inition)?[:\s]+)(.+)/i);
-        if (defMatch) {
-            result.push("**Definition:** " + defMatch[2]);
-            continue;
-        }
-
-        // Formula (block display math)
-        const formulaMatch = trimmed.match(/^(formula|equation)[:\s]+(.+)/i);
-        if (formulaMatch) {
-            result.push("$$" + formulaMatch[2].trim() + "$$");
-            continue;
-        }
-
-        // Example
-        const exampleMatch = trimmed.match(/^(example|e\.g\.)[:\s]+(.+)/i);
-        if (exampleMatch) {
-            result.push("**Example:** " + exampleMatch[2]);
-            continue;
-        }
-
-        // Note/Important/Key/Remember/Summary — use blockquote
-        const calloutMatch = trimmed.match(
-            /^(note|important|key|remember|summary|warning|caution|hint|tip)[:\s]+(.+)/i,
-        );
-        if (calloutMatch) {
-            const label =
-                calloutMatch[1].charAt(0).toUpperCase() + calloutMatch[1].slice(1).toLowerCase();
-            result.push("> **" + label + ":** " + calloutMatch[2]);
-            continue;
-        }
-
-        result.push(line);
+    const taskMatch = line.match(TASK_PATTERN);
+    if (taskMatch) {
+      out.push(`${taskMatch[1].replace(/[-*+]\s*$/, '')}- [ ] ${line.slice(taskMatch[0].length)}`);
+      continue;
     }
 
-    return { lines: result };
-}
-
-/**
- * Pass 3: Math detection (runs AFTER special elements)
- *
- * Wraps math expressions in $ (inline) or $$ (display) delimiters.
- * Avoids wrapping code blocks, headings, or already-delimited content.
- */
-function pass3_math(input: PassResult): PassResult {
-    const lines = input.lines;
-    const result: string[] = [];
-    let inCode = false;
-
-    for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Track code block state
-        if (trimmed.startsWith("```")) {
-            inCode = !inCode;
-            result.push(line);
-            continue;
-        }
-
-        // Skip code blocks, headings, blockquotes, lists, and already-wrapped math
-        if (
-            inCode ||
-            trimmed.startsWith("#") ||
-            trimmed.startsWith(">") ||
-            trimmed.startsWith("**") ||  // Skip lines already formatted as bold (e.g. "**Example:** ...")
-            trimmed.startsWith("```") ||
-            trimmed.startsWith("$$") ||
-            trimmed.startsWith("$")
-        ) {
-            result.push(line);
-            continue;
-        }
-
-        // Same-line bracket math: [ formula ] → $$ formula $$
-        const bracketMatch = /^\[\s*(.+?)\s*\]$/.exec(trimmed);
-        if (bracketMatch && bracketMatch[1].length < 200) {
-            result.push("$$" + bracketMatch[1] + "$$");
-            continue;
-        }
-
-        if (looksLikeMath(trimmed)) {
-            // Determine display vs inline math
-            // Display: standalone line with = sign and formula indicators
-            const hasFormulaIndicators =
-                trimmed.includes("_") || trimmed.includes("^") || trimmed.includes("\\");
-            const isDisplay =
-                trimmed.length > 20 &&
-                trimmed.includes("=") &&
-                hasFormulaIndicators;
-
-            if (isDisplay) {
-                result.push("$$" + trimmed + "$$");
-            } else {
-                result.push("$" + trimmed + "$");
-            }
-        } else {
-            result.push(line);
-        }
+    const qaMatch = line.match(QA_PATTERN);
+    if (qaMatch) {
+      out.push(`**${qaMatch[1].toUpperCase()}:** ${qaMatch[2]}`);
+      continue;
     }
 
-    return { lines: result };
+    if (looksLikeTranscript) {
+      const speakerMatch = line.match(/^(\s*)([A-Z][\w'’.-]*(?:\s[A-Z][\w'’.-]*){0,2}):\s+(.+)$/);
+      if (speakerMatch && !RESERVED_LABELS.has(speakerMatch[2].toLowerCase())) {
+        out.push(`${speakerMatch[1]}**${speakerMatch[2]}:** ${speakerMatch[3]}`);
+        continue;
+      }
+    }
+
+    out.push(line);
+  }
+  return { lines: out };
 }
 
-/**
- * Pass 4: Heading detection (runs AFTER special elements and math)
- *
- * Promotes heading-like lines to Markdown headings (#, ##, ###).
- * Context-aware: only promotes if preceded by a blank line (or is the first line).
- */
-function pass4_headings(input: PassResult): PassResult {
-    const lines = input.lines;
-    const result: string[] = [];
-    let inCode = false;
+// ── Pass 8 — Links (new: emails, double-wrap guard) ─────────────────────
 
+const URL_PATTERN = /(?<!\]\()https?:\/\/[^\s)]+/g;
+const EMAIL_PATTERN = /(?<!\]\()(?<![\w.-])[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}(?![\w.-])/g;
+
+function pass8_links(doc: Doc): Doc {
+  const protectedMask = computeProtectedMask(doc.lines);
+  const out = doc.lines.map((line, idx) => {
+    if (protectedMask[idx] || /^\s*```/.test(line)) return line;
+    let result = line.replace(URL_PATTERN, (url) => {
+      try {
+        const u = new URL(url);
+        const label = (u.hostname + u.pathname).replace(/\/$/, '');
+        return `[${label}](${url})`;
+      } catch {
+        return url;
+      }
+    });
+    result = result.replace(EMAIL_PATTERN, (email) => `[${email}](mailto:${email})`);
+    return result;
+  });
+  return { lines: out };
+}
+
+// ── Pass 9 — Cleanup ─────────────────────────────────────────────────────
+
+function normalizeTypography(line: string): string {
+  return line
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\u00A0/g, ' ')
+    .replace(/^(\s*)[•◦▪‣●·]\s+/, '$1- ');
+}
+
+function pass9_cleanup(doc: Doc, fixOcrArtifacts: boolean): Doc {
+  let lines = doc.lines.map(normalizeTypography).map((l) => l.replace(/\s+$/, ''));
+
+  if (fixOcrArtifacts) {
+    const joined: string[] = [];
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmed = line.trim();
-
-        // Track code block state
-        if (trimmed.startsWith("```")) {
-            inCode = !inCode;
-            result.push(line);
-            continue;
-        }
-
-        if (inCode || !trimmed || trimmed.startsWith("#") || trimmed.startsWith(">")) {
-            result.push(line);
-            continue;
-        }
-
-        // Only detect headings if preceded by a blank line (or is first line)
-        const precededByBlank = i === 0 || lines[i - 1].trim() === "" || result[result.length - 1].trim() === "";
-
-        if (!precededByBlank) {
-            result.push(line);
-            continue;
-        }
-
-        if (looksLikeHeading(trimmed)) {
-            // Check if it's a numbered list (consecutive numbered lines) rather than a heading
-            const isNumberedLine = /^\d+\.\s/.test(trimmed);
-            if (isNumberedLine) {
-                // If the NEXT line is also numbered, this is a list, not a heading
-                const nextLine = i + 1 < lines.length ? lines[i + 1].trim() : "";
-                if (/^\d+\.\s/.test(nextLine)) {
-                    result.push(line);
-                    continue;
-                }
-            }
-
-            // Count heading level based on depth indicators
-            let level = 2; // default ##
-
-            // Chapter/Lecture → #
-            if (
-                /^(chapter|lecture|part)\s+\d+/i.test(trimmed) ||
-                /^abstract/i.test(trimmed)
-            ) {
-                level = 1;
-            }
-
-            // Sub-numbering (1.1, 2.3.1) → ### for sub, #### for sub-sub
-            const match = trimmed.match(/^(\d+(?:\.\d+)*)\s/);
-            if (match) {
-                const parts = match[1].split(".").length;
-                level = Math.min(parts + 1, 4);
-            }
-
-            // Remove numbering from the heading text
-            const cleanText = trimmed.replace(/^\d+(?:\.\d+)*\.?\s*/, "").trim();
-            const headingText = cleanText || trimmed;
-
-            result.push(`${"#".repeat(level)} ${headingText}`);
-        } else {
-            result.push(line);
-        }
+      const m = lines[i].match(/^(.*[a-z])-$/);
+      const next = lines[i + 1];
+      if (m && next !== undefined && !isBlank(next) && /^[a-z]/.test(next.trim())) {
+        joined.push(m[1] + next.trim());
+        i++;
+        continue;
+      }
+      joined.push(lines[i]);
     }
+    lines = joined;
+  }
 
-    return { lines: result };
+  const collapsed: string[] = [];
+  let blankRun = 0;
+  for (const line of lines) {
+    if (isBlank(line)) {
+      blankRun++;
+      if (blankRun <= 2) collapsed.push('');
+    } else {
+      blankRun = 0;
+      collapsed.push(line);
+    }
+  }
+  while (collapsed.length && isBlank(collapsed[collapsed.length - 1])) collapsed.pop();
+
+  return { lines: collapsed };
 }
 
-/**
- * Pass 5: List and reference detection
- *
- * Detects implicit list items (lines starting with -, *, numbers, or
- * patterns like "term — description") and ensures proper list formatting.
- * Also detects reference sections.
- */
-function pass5_lists(input: PassResult): PassResult {
-    const lines = input.lines;
-    const result: string[] = [];
-    let inCode = false;
+// ── Table of contents (optional) ────────────────────────────────────────
 
-    for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Track code block state
-        if (trimmed.startsWith("```")) {
-            inCode = !inCode;
-            result.push(line);
-            continue;
-        }
-
-        // Pass through code blocks, headings, blockquotes, math
-        if (
-            inCode ||
-            trimmed.startsWith("#") ||
-            trimmed.startsWith(">") ||
-            trimmed.startsWith("$$") ||
-            trimmed.startsWith("$")
-        ) {
-            result.push(line);
-            continue;
-        }
-
-        // Already a list item
-        if (/^[-*]\s/.test(trimmed) || /^\d+\.\s/.test(trimmed)) {
-            result.push(line);
-            continue;
-        }
-
-        // Detect implicit unordered list: "term — description" or "term - description"
-        const implicitUnordered = trimmed.match(/^(.+?)\s*[—–-]\s+(.+)/);
-        if (implicitUnordered && implicitUnordered[1].length < 30) {
-            result.push("- " + implicitUnordered[1].trim() + " — " + implicitUnordered[2].trim());
-            continue;
-        }
-
-        // Detect reference items: "1. Author, Title" or "[1] Author" in reference sections
-        if (/^\d+\.\s+/.test(trimmed) && trimmed.length > 30) {
-            // Check if it looks like a reference (Author, year, title pattern)
-            if (/[A-Z][a-z]+.*\d{4}/.test(trimmed) || /[A-Z][a-z]+,\s/.test(trimmed)) {
-                result.push(trimmed);
-                continue;
-            }
-            // If preceded by references heading, treat as list item
-            const prevLine = lines.indexOf(line) > 0 ? lines[lines.indexOf(line) - 1].trim() : "";
-            if (/^#/.test(prevLine) && /references/i.test(prevLine)) {
-                result.push(trimmed);
-                continue;
-            }
-        }
-
-        result.push(line);
-    }
-
-    return { lines: result };
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\- ]+/g, '')
+    .replace(/\s+/g, '-');
 }
 
-/**
- * Pass 6: URL/link detection
- *
- * Wraps bare URLs in markdown link syntax where appropriate.
- * Detects patterns like:
- *   https://example.com → [example.com](https://example.com)
- *   "see https://example.com for details" → "see [example.com](https://example.com) for details"
- */
-function pass6_urls(input: PassResult): PassResult {
-    const lines = input.lines;
-    const result: string[] = [];
-    let inCode = false;
-
-    // URL regex
-    const urlRegex = /(^|\s)(https?:\/\/[^\s<>"']+)/g;
-
-    for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Track code block state
-        if (trimmed.startsWith("```")) {
-            inCode = !inCode;
-            result.push(line);
-            continue;
-        }
-
-        // Skip code blocks, headings
-        if (inCode || trimmed.startsWith("```") || trimmed.startsWith("#")) {
-            result.push(line);
-            continue;
-        }
-
-        // Replace bare URLs with markdown links
-        const processed = trimmed.replace(urlRegex, (_match, before, url) => {
-            // Shorten display text by removing protocol
-            const display = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
-            return `${before}[${display}](${url})`;
-        });
-
-        result.push(processed);
-    }
-
-    return { lines: result };
-}
-
-/**
- * Pass 7: Cleanup
- *
- * Normalizes spacing, removes duplicate blank lines, ensures paragraph
- * separation, and final formatting touches.
- */
-function pass7_cleanup(input: PassResult): PassResult {
-    const lines = input.lines;
-    const result: string[] = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // Collapse 3+ blank lines to 2
-        if (line === "" && result.length > 0 && result[result.length - 1] === "") {
-            // Check if the next line is also blank — skip this one
-            if (i + 1 < lines.length && lines[i + 1] === "") {
-                continue;
-            }
-        }
-
-        // Trim trailing whitespace
-        result.push(line.trimEnd());
-    }
-
-    // Ensure file ends with exactly one newline
-    while (result.length > 0 && result[result.length - 1] === "") {
-        result.pop();
-    }
-
-    return { lines: result };
-}
-
-// ─── Main entry point ─────────────────────────────────────────────────────────
-
-/**
- * Smart-format raw text into structured Markdown.
- *
- * @param rawText  The raw unstructured input text
- * @param opts     Optional formatting options
- * @returns        Structured Markdown text
- */
-export function smartFormat(rawText: string, opts?: FormatOptions): string {
-    let pass: PassResult = { lines: rawText.split("\n") };
-
-    // Run each pass sequentially
-    pass = pass1_blocks(pass);
-    pass = pass2_special(pass);     // Special elements BEFORE math (example: x^3 → **Example:** x^3, not $example: Compute x^3$)
-    pass = pass3_math(pass);        // Math detection
-    pass = pass4_headings(pass);    // Headings after special/math
-    pass = pass5_lists(pass);
-    pass = pass6_urls(pass);
-    pass = pass7_cleanup(pass);
-
-    return pass.lines.join("\n");
+function buildTOC(headings: HeadingInfo[]): string {
+  const lines = ['## Table of Contents'];
+  for (const h of headings) {
+    const indent = '  '.repeat(Math.max(0, h.level - 2));
+    lines.push(`${indent}- [${h.text}](#${slugify(h.text)})`);
+  }
+  return lines.join('\n');
 }

@@ -141,15 +141,302 @@ export function stripAccents(text: string): string {
 }
 
 /**
- * Strip extensible arrows: \xrightarrow{text} → text, \xleftarrow{text} → text.
+ * Strip extensible arrows: \xrightarrow{text} → text, \xleftarrow{text} → text,
+ * \overrightarrow{text} → text, \overleftarrow{text} → text.
  */
 export function stripExtensibleArrows(text: string): string {
     text = stripBraceCommand(text, /\\xrightarrow/);
     text = stripBraceCommand(text, /\\xleftarrow/);
+    text = stripBraceCommand(text, /\\overrightarrow/);
+    text = stripBraceCommand(text, /\\overleftarrow/);
+    text = stripBraceCommand(text, /\\underrightarrow/);
+    text = stripBraceCommand(text, /\\underleftarrow/);
     return text;
 }
 
+/**
+ * Strip font size commands: \tiny, \small, \normalsize, \large, \Large,
+ * \LARGE, \huge, \Huge → content.
+ */
+export function stripFontSizeCommands(text: string): string {
+    const sizeCmds = [
+        /\\tiny/g,
+        /\\small/g,
+        /\\normalsize/g,
+        /\\large/g,
+        /\\Large/g,
+        /\\LARGE/g,
+        /\\huge/g,
+        /\\Huge/g,
+    ];
+    for (const pattern of sizeCmds) {
+        text = stripBraceCommand(text, pattern);
+    }
+    return text;
+}
+
+/**
+ * Strip \cfrac[l|c|r]{num}{den} → num/den.
+ * \cfrac is used for continued fractions; we keep both parts
+ * separated by a slash for readability.
+ */
+export function stripContinuedFraction(text: string): string {
+    let result = "";
+    let i = 0;
+
+    while (i < text.length) {
+        const matchIdx = text.indexOf("\\cfrac", i);
+        if (matchIdx === -1) {
+            result += text.slice(i);
+            break;
+        }
+
+        result += text.slice(i, matchIdx);
+        let pos = matchIdx + 6;
+
+        // Skip whitespace
+        while (pos < text.length && text[pos] === " ") pos++;
+
+        // Skip optional [l|c|r]
+        if (pos < text.length && text[pos] === "[") {
+            pos++;
+            while (pos < text.length && text[pos] !== "]") pos++;
+            if (pos < text.length) pos++;
+        }
+
+        // Skip whitespace
+        while (pos < text.length && text[pos] === " ") pos++;
+
+        // Extract numerator
+        if (pos < text.length && text[pos] === "{") {
+            const [num, afterNum] = extractBraced(text, pos) ?? ["", pos + 1];
+            let after = afterNum;
+
+            // Skip whitespace
+            while (after < text.length && text[after] === " ") after++;
+
+            // Extract denominator
+            if (after < text.length && text[after] === "{") {
+                const [den, afterClose] = extractBraced(text, after) ?? ["", after + 1];
+                result += `${num}/${den}`;
+                i = afterClose;
+            } else {
+                result += num;
+                i = after;
+            }
+        } else {
+            result += "\\cfrac";
+            i = pos;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Strip \substack{content} → content.
+ * Used in subscripts/superscripts for stacked indices.
+ */
+export function stripSubstack(text: string): string {
+    return stripBraceCommand(text, /\\substack/);
+}
+
+/**
+ * Strip \overset{top}{base} and \underset{bottom}{base} → base.
+ * These are stack/underset commands; we keep only the base/content.
+ */
+export function stripOverUnderSet(text: string): string {
+    text = stripTwoArgBraceCommand(text, /\\overset/);
+    text = stripTwoArgBraceCommand(text, /\\underset/);
+    text = stripTwoArgBraceCommand(text, /\\stackrel/);
+    return text;
+}
+
+/**
+ * Strip \limits and \nolimits (simple removal).
+ */
+export function stripLimitsCommands(text: string): string {
+    return text.replace(/\\limits\s*/g, "").replace(/\\nolimits\s*/g, "");
+}
+
+/**
+ * Strip math atom commands: \mathop{...}, \mathrel{...}, \mathbin{...},
+ * \mathord{...}, \mathinner{...} → content.
+ */
+export function stripMathAtoms(text: string): string {
+    const atoms = [
+        /\\mathop/g,
+        /\\mathrel/g,
+        /\\mathbin/g,
+        /\\mathord/g,
+        /\\mathinner/g,
+    ];
+    for (const pattern of atoms) {
+        text = stripArgsKeepLast(text, pattern);
+    }
+    return text;
+}
+
+/**
+ * Strip \smash[opt]{content} and \mathclap, \mathrlap, \mathllap, \mathmbox.
+ * All of these keep only their last braced argument.
+ */
+export function stripSmashAndClaps(text: string): string {
+    const cmds = [
+        /\\smash/g,
+        /\\mathclap/g,
+        /\\mathrlap/g,
+        /\\mathllap/g,
+        /\\mathmbox/g,
+    ];
+    for (const pattern of cmds) {
+        text = stripArgsKeepLast(text, pattern);
+    }
+    return text;
+}
+
+/**
+ * Strip \raisebox{lift}[ht][dp]{content} and \scalebox{factor}{content} → content.
+ * Both keep only the last mandatory braced argument.
+ */
+export function stripRaiseAndScale(text: string): string {
+    text = stripArgsKeepLast(text, /\\raisebox/g);
+    text = stripArgsKeepLast(text, /\\scalebox/g);
+    text = stripArgsKeepLast(text, /\\resizebox/g);
+    text = stripArgsKeepLast(text, /\\rotatebox/g);
+    return text;
+}
+
+/**
+ * Strip \sideset{left}{right}{symbol} → symbol.
+ * Three-argument command; we keep only the last (the symbol).
+ */
+export function stripSideSet(text: string): string {
+    return stripArgsKeepLast(text, /\\sideset/g);
+}
+
+/**
+ * Strip \prescript{top}{bottom}{symbol} → symbol.
+ * Three-argument command; we keep only the last (the symbol).
+ */
+export function stripPreScript(text: string): string {
+    return stripArgsKeepLast(text, /\\prescript/g);
+}
+
 // ─── Generic helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Strip \cmd{top}{base} → base, handling nested braces.
+ */
+function stripTwoArgBraceCommand(text: string, cmd: RegExp): string {
+    let result = "";
+    let i = 0;
+
+    while (i < text.length) {
+        cmd.lastIndex = 0;
+        const match = cmd.exec(text.slice(i));
+        if (!match) {
+            result += text.slice(i);
+            break;
+        }
+
+        const matchIdx = i + match.index;
+        result += text.slice(i, matchIdx);
+        let pos = matchIdx + match[0].length;
+
+        // Skip whitespace
+        while (pos < text.length && text[pos] === " ") pos++;
+
+        // Extract first arg (top/bottom stack item)
+        if (pos < text.length && text[pos] === "{") {
+            const [, afterFirst] = extractBraced(text, pos);
+            let after = afterFirst;
+
+            // Skip whitespace
+            while (after < text.length && text[after] === " ") after++;
+
+            // Extract second arg (base — this is what we keep)
+            if (after < text.length && text[after] === "{") {
+                const [base, afterClose] = extractBraced(text, after);
+                result += base;
+                i = afterClose;
+            } else {
+                i = after;
+            }
+        } else {
+            result += match[0];
+            i = pos;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Strip \cmd{...}{...}{...} → last mandatory arg, handling nested braces.
+ * Skips optional [args] and keeps only the last {braced} argument.
+ * This one helper handles 1-arg, 2-arg, and 3-arg commands with optional brackets.
+ */
+function stripArgsKeepLast(text: string, cmd: RegExp): string {
+    let result = "";
+    let i = 0;
+
+    while (i < text.length) {
+        cmd.lastIndex = 0;
+        const match = cmd.exec(text.slice(i));
+        if (!match) {
+            result += text.slice(i);
+            break;
+        }
+
+        const matchIdx = i + match.index;
+        result += text.slice(i, matchIdx);
+        let pos = matchIdx + match[0].length;
+
+        // Skip whitespace
+        while (pos < text.length && (text[pos] === " " || text[pos] === "\t")) pos++;
+
+        // Collect all args, keeping last mandatory braced one
+        let lastBraced: string | null = null;
+        let hadArg = false;
+
+        while (pos < text.length) {
+            // Skip whitespace
+            while (pos < text.length && (text[pos] === " " || text[pos] === "\t")) pos++;
+            if (pos >= text.length) break;
+
+            if (text[pos] === "[") {
+                // Optional arg — skip it
+                let depth = 1;
+                pos++;
+                while (pos < text.length && depth > 0) {
+                    if (text[pos] === "[") depth++;
+                    else if (text[pos] === "]") depth--;
+                    pos++;
+                }
+                hadArg = true;
+            } else if (text[pos] === "{") {
+                // Mandatory arg — track as last seen
+                const [inner, afterClose] = extractBraced(text, pos);
+                lastBraced = inner;
+                pos = afterClose;
+                hadArg = true;
+            } else {
+                break; // not an arg character
+            }
+        }
+
+        if (hadArg && lastBraced !== null) {
+            result += lastBraced;
+            i = pos;
+        } else {
+            result += match[0];
+            i = pos;
+        }
+    }
+
+    return result;
+}
 
 /**
  * Strip \cmd{content} → content, handling nested braces.

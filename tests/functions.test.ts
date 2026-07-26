@@ -191,7 +191,7 @@ describe("full pipeline — functions integration", () => {
 
     it("handles \\lim with fraction: \\lim_{x \\to 0} \\frac{\\sin x}{x}", () => {
         const result = runPipeline("\\lim_{x \\to 0} \\frac{\\sin x}{x}").trim();
-        // formatFracPart now recognizes sin(x) as self-contained (ends with ))
+        // formatFracPart recognizes sin(x) as a function call — no double-wrap
         expect(result).toBe("lim (x → 0) (sin(x)/x)");
     });
 

@@ -116,6 +116,10 @@ latex2plain includes a full web application where users can convert Markdown and
 - **Paste text** — Type or paste Markdown/LaTeX directly into the editor
 - **Upload files** — Upload `.md` or `.txt` files (drag & drop supported)
 - **Smart Format toggle** — Auto-detect headings, code blocks, math formulas, definitions, and more from raw unstructured text before conversion
+- **AI Format toggle** — Uses Groq AI (Llama 3) to restructure messy/unformatted notes into beautiful Markdown before conversion. Falls back to Smart Format when AI is unavailable or rate-limited.
+- **3 conversion modes**: Raw (passthrough), Smart Format (deterministic), AI Format (AI-powered)
+- **Real-time progress stepper** — Visual timeline showing each conversion step (sending → processing → formatting → PDF generation)
+- **Unrecognized LaTeX detection** — Remaining `\command{...}` patterns get red error boxes in the PDF with the salvaged content visible
 - **Generate PDF** — Click "Convert to PDF" to download the result
 - **Cold-start UX** — Time-based loading messages inform users when the Render backend is waking up from inactivity
 - **Responsive design** — Works on mobile, tablet, and desktop
@@ -176,7 +180,7 @@ This is especially useful for:
 | Superscripts | `x^2`, `e^{-n}` | `x²`, `e⁻ⁿ` |
 | Fractions | `\\frac{1}{2}` | `(1/2)` |
 | Roots | `\\sqrt{x}`, `\\sqrt[3]{x}` | `√x`, `∛x` |
-| Function parenthesization | `sin x` → `sin(x)`, `log n` → `log(n)` | parentheses added |
+| Function parenthesization | `sin x` → `sin(x)`, `log n` → `log(n)` | parentheses added (step 20.5, before fractions to avoid double-wrap) |
 | Cleanup | extra spaces / blank lines | normalized |
 | Code block restoration | placeholder | original `` ``` `` |
 
@@ -223,7 +227,7 @@ npm run dev:client
 # Run both backend + frontend in development
 npm run dev:all
 
-# Run tests (343 tests across 15 test files)
+# Run tests (431 tests across 17 test files)
 npm test
 
 # Run lint
@@ -342,7 +346,7 @@ cp .env.example .env
 
 | Module | Location | Purpose |
 |--------|----------|---------|
-| Conversion pipeline | `src/converter/` | LaTeX → Unicode text conversion (24 stages) |
+| Conversion pipeline | `src/converter/` | LaTeX → Unicode text conversion (27 stages) |
 | Smart Format | `src/formatter/` | Pre-processes raw text into structured Markdown (7-pass detection) |
 | PDF generation | `src/pdf.ts` | Wraps md-to-pdf for reusable PDF buffer output |
 | CLI | `src/cli.ts` | Command-line interface, flag parsing, file processing |
@@ -365,19 +369,21 @@ Both reuse the same pipeline — no shell commands, no child processes, no code 
 ## Tests
 
 ```bash
-npm test           # Run all 343 tests (15 test files)
+npm test           # Run all 431 tests (17 test files)
 npm run test:watch # Watch mode
 ```
 
 Test files cover:
 
-- All conversion pipeline stages (12 test files, 250 tests)
+- All conversion pipeline stages (12 test files, 250+ tests)
+- Smart Format formatting (77 tests)
+- AI Format integration (26 tests)
+- LaTeX stripping (72 tests)
+- Unrecognized LaTeX detection (21 tests)
 - Metadata and structure preservation (49 tests)
-- Smart Format formatting (36 tests)
 - Server API endpoints (8 tests)
 - Input validation
 - Empty inputs
-- Unsupported file types
 - Error handling
 
 ---

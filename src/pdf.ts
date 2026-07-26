@@ -49,10 +49,10 @@ export async function convertToPdfBuffer(
             pdf_options: {
                 format: "A4",
                 margin: {
-                    top: "0.78in",
-                    bottom: "0.78in",
-                    left: "0.9in",
-                    right: "0.9in",
+                    top: "0.83in",
+                    bottom: "1in",
+                    left: "1.3in",
+                    right: "1.3in",
                 },
                 printBackground: true,
             },

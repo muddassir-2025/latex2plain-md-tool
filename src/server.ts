@@ -153,8 +153,9 @@ if (isProduction) {
         app.use(express.static(clientDist));
 
         // SPA fallback — serve index.html for all non-API routes
+        // Note: Express 5 dropped bare wildcard '*' support, so we use middleware instead
         const indexPath = path.join(clientDist, "index.html");
-        app.get("*", (_req, res) => {
+        app.use((_req, res) => {
             if (fs.existsSync(indexPath)) {
                 res.sendFile(indexPath);
             } else {

@@ -390,10 +390,7 @@ body {
 
 /* ── Format Options (AI + Smart) ──────────────────────────────── */
 .format-options {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0 0.25rem;
+    display: none;
 }
 
 .smart-format-row {

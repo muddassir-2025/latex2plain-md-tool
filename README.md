@@ -141,7 +141,7 @@ The optional **Smart Format** stage runs before the main conversion pipeline whe
 |-----------|-----------|------------------|
 | Headings | `chapter 1: calculus review` | `# chapter 1: calculus review` |
 | Sub-headings | `2.1 Methodology` | `### Methodology` |
-| Code blocks | `def factorial(n):` / `import numpy` | ` ```python ... ``` ` |
+| Code blocks | `def factorial(n):` / `import numpy` | ` @@CODEBLOCK-6@@ ` |
 | Math expressions | `int_a^b f(x) dx` | `$$int_a^b f(x) dx$$` |
 | Definitions | `def: A function maps...` | `**Definition:** A function maps...` |
 | Notes/Callouts | `note: Remember to check...` | `> **Note:** Remember to check...` |
@@ -160,7 +160,7 @@ This is especially useful for:
 
 | Stage | Input | Output |
 |-------|-------|--------|
-| Code block protection | `` ```ts ... ``` `` | placeholder (restored after) |
+| Code block protection | `` @@CODEBLOCK-7@@ `` | placeholder (restored after) |
 | Dollar stripping | `$x^2$` → `x^2`, `$$\\n...\\n$$` → `...` | content with delimiters removed |
 | Display math stripping | `\\[x^2\\]` | `x^2` |
 | Style command stripping | `\\displaystyle`, `\\textstyle`, `\\scriptstyle`, `\\scriptscriptstyle` | _(removed)_ |
@@ -251,14 +251,14 @@ The application is designed as a single **Render Web Service** that serves both 
 
 ```
 Render Web Service
-    │
-    ├── Node.js + Express backend
-    │       │
-    │       ├── GET  /health
-    │       ├── POST /api/convert
-    │       └── POST /api/convert-file
-    │
-    └── React frontend (static files, served for all other routes)
+ │
+ ├── Node.js + Express backend
+ │ │
+ │ ├── GET /health
+ │ ├── POST /api/convert
+ │ └── POST /api/convert-file
+ │
+ └── React frontend (static files, served for all other routes)
 ```
 
 ### Deploy Steps
@@ -320,26 +320,26 @@ cp .env.example .env
 ## Architecture
 
 ```
-        Raw unstructured text (study notes, ChatGPT output, …)
-                           │
-                           ▼
-               Smart Format (src/formatter/)
-              (7-pass detection & structuring)
-                           │
-                           ▼
-                 latex2plain core (src/converter/)
-                  (LaTeX → Unicode pipeline)
-                           │
-              ┌────────────┴────────────┐
-              │                         │
-              ▼                         ▼
-         CLI (src/cli.ts)          Web API (src/server.ts)
-              │                         │
-              ▼                         ▼
-        Terminal users             React frontend (client/)
-                                       │
-                                       ▼
-                                  Browser users
+ Raw unstructured text (study notes, ChatGPT output, …)
+ │
+ ▼
+ Smart Format (src/formatter/)
+ (7-pass detection & structuring)
+ │
+ ▼
+ latex2plain core (src/converter/)
+ (LaTeX → Unicode pipeline)
+ │
+ ┌────────────┴────────────┐
+ │ │
+ ▼ ▼
+ CLI (src/cli.ts) Web API (src/server.ts)
+ │ │
+ ▼ ▼
+ Terminal users React frontend (client/)
+ │
+ ▼
+ Browser users
 ```
 
 ### Core Modules
@@ -369,7 +369,7 @@ Both reuse the same pipeline — no shell commands, no child processes, no code 
 ## Tests
 
 ```bash
-npm test           # Run all 431 tests (17 test files)
+npm test # Run all 431 tests (17 test files)
 npm run test:watch # Watch mode
 ```
 
